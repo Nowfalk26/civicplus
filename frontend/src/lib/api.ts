@@ -1,15 +1,25 @@
 import axios from 'axios';
 
-export const API_URL =
-  (import.meta as unknown as { env: { VITE_API_URL?: string } }).env?.VITE_API_URL || '/api';
+const getBaseUrl = (): string => {
+  const envUrl = (import.meta as unknown as { env: { VITE_API_URL?: string } }).env?.VITE_API_URL;
+  if (envUrl && envUrl.startsWith('http')) return envUrl;
+  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+    return 'http://localhost:3000/api';
+  }
+  return 'https://shaggy-grapes-listen.loca.lt/api';
+};
+
+export const API_URL = getBaseUrl();
 
 export const api = axios.create({
   baseURL: API_URL,
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
+    'bypass-tunnel-reminder': 'true',
   },
 });
+
 
 // Attach JWT access token if present in localStorage
 api.interceptors.request.use((config) => {

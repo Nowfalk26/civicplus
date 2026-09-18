@@ -9,11 +9,21 @@ interface GoogleOAuthModalProps {
   onConfigSaved?: (clientId: string) => void;
 }
 
+export const DEFAULT_GOOGLE_CLIENT_ID = '242104758662-jc2tau4io58q5grdirjsr471lkqt3mn3.apps.googleusercontent.com';
+
 export const isGoogleClientIdConfigured = (clientId?: string): boolean => {
   if (!clientId) return false;
   const clean = clientId.trim();
   if (clean.includes('mock') || clean.includes('placeholder')) return false;
   return clean.endsWith('.apps.googleusercontent.com');
+};
+
+export const getEffectiveGoogleClientId = (): string => {
+  const localId = localStorage.getItem('civics_google_client_id');
+  if (localId && isGoogleClientIdConfigured(localId)) return localId.trim();
+  const envId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+  if (envId && isGoogleClientIdConfigured(envId)) return envId.trim();
+  return DEFAULT_GOOGLE_CLIENT_ID;
 };
 
 export const GoogleOAuthModal: React.FC<GoogleOAuthModalProps> = ({
@@ -27,15 +37,12 @@ export const GoogleOAuthModal: React.FC<GoogleOAuthModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
-      const stored = localStorage.getItem('civics_google_client_id') || import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
-      setCurrentConfig(stored);
-      if (isGoogleClientIdConfigured(stored)) {
-        setClientId(stored);
-      } else {
-        setClientId('');
-      }
+      const effective = getEffectiveGoogleClientId();
+      setCurrentConfig(effective);
+      setClientId(effective);
     }
   }, [isOpen]);
+
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();

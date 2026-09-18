@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 import { GoogleLogin } from '@react-oauth/google';
 import { useStore } from '../../store/useStore';
 import { api } from '../../lib/api';
-import { GoogleOAuthModal, isGoogleClientIdConfigured } from '../../components/auth/GoogleOAuthModal';
+import { GoogleOAuthModal, isGoogleClientIdConfigured, getEffectiveGoogleClientId } from '../../components/auth/GoogleOAuthModal';
 
 
 const officerLoginSchema = z.object({
@@ -23,15 +23,13 @@ export const OfficerLogin: React.FC = () => {
   const location = useLocation();
   const [loading, setLoading] = useState(false);
   const [googleModalOpen, setGoogleModalOpen] = useState(false);
-  const [currentClientId, setCurrentClientId] = useState(() => {
-    return localStorage.getItem('civics_google_client_id') || import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
-  });
+  const [currentClientId, setCurrentClientId] = useState(getEffectiveGoogleClientId);
 
   const isConfigured = isGoogleClientIdConfigured(currentClientId);
 
   React.useEffect(() => {
     const handleUpdate = () => {
-      setCurrentClientId(localStorage.getItem('civics_google_client_id') || import.meta.env.VITE_GOOGLE_CLIENT_ID || '');
+      setCurrentClientId(getEffectiveGoogleClientId());
     };
     window.addEventListener('civics_google_client_id_changed', handleUpdate);
     window.addEventListener('storage', handleUpdate);
@@ -40,6 +38,7 @@ export const OfficerLogin: React.FC = () => {
       window.removeEventListener('storage', handleUpdate);
     };
   }, []);
+
 
 
   const {

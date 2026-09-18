@@ -3,14 +3,8 @@ import ReactDOM from 'react-dom/client';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import App from './App';
 import './index.css';
+import { getEffectiveGoogleClientId } from './components/auth/GoogleOAuthModal';
 
-const getEffectiveGoogleClientId = (): string => {
-  const localId = localStorage.getItem('civics_google_client_id');
-  if (localId && !localId.includes('mock')) return localId;
-  const envId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-  if (envId && !envId.includes('mock')) return envId;
-  return localId || envId || 'placeholder.apps.googleusercontent.com';
-};
 
 const Root: React.FC = () => {
   const [clientId, setClientId] = useState<string>(getEffectiveGoogleClientId);

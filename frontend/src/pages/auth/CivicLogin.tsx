@@ -7,7 +7,7 @@ import toast from 'react-hot-toast';
 import { GoogleLogin } from '@react-oauth/google';
 import { useStore } from '../../store/useStore';
 import { api } from '../../lib/api';
-import { GoogleOAuthModal, isGoogleClientIdConfigured } from '../../components/auth/GoogleOAuthModal';
+import { GoogleOAuthModal, isGoogleClientIdConfigured, getEffectiveGoogleClientId } from '../../components/auth/GoogleOAuthModal';
 
 
 const civicEmailSchema = z.object({
@@ -25,15 +25,13 @@ export const CivicLogin: React.FC = () => {
   const [authMethod, setAuthMethod] = useState<'options' | 'mobile' | 'email'>('options');
   const [loading, setLoading] = useState(false);
   const [googleModalOpen, setGoogleModalOpen] = useState(false);
-  const [currentClientId, setCurrentClientId] = useState(() => {
-    return localStorage.getItem('civics_google_client_id') || import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
-  });
+  const [currentClientId, setCurrentClientId] = useState(getEffectiveGoogleClientId);
 
   const isConfigured = isGoogleClientIdConfigured(currentClientId);
 
   React.useEffect(() => {
     const handleUpdate = () => {
-      setCurrentClientId(localStorage.getItem('civics_google_client_id') || import.meta.env.VITE_GOOGLE_CLIENT_ID || '');
+      setCurrentClientId(getEffectiveGoogleClientId());
     };
     window.addEventListener('civics_google_client_id_changed', handleUpdate);
     window.addEventListener('storage', handleUpdate);

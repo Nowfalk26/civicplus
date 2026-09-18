@@ -1,0 +1,138 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  CITIZEN
+  OFFICER
+  ADMIN
+}
+
+enum Category {
+  ROAD_DAMAGE
+  STREET_LIGHT
+  ELECTRICAL_WIRE
+  GARBAGE_WASTE
+  STORM_WATER_DRAIN
+  PUBLIC_SPACE
+}
+
+enum Status {
+  SUBMITTED
+  ACCEPTED
+  ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+  REJECTED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum PhotoType {
+  BEFORE
+  AFTER
+  EVIDENCE
+}
+
+model User {
+  id                 String      @id @default(uuid())
+  username           String      @unique
+  email              String      @unique
+  phone              String      @unique
+  password           String
+  role               Role        @default(CITIZEN)
+  location           String
+  avatarUrl          String?
+  department         String?
+  designation        String?
+  fraudScore         Int         @default(0)
+  isBanned           Boolean     @default(false)
+  bannedUntil        DateTime?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  complaints         Complaint[] @relation("ReportedComplaints")
+  assignedComplaints Complaint[] @relation("AssignedComplaints")
+
+  @@index([email])
+  @@index([phone])
+  @@index([role])
+}
+
+model Complaint {
+  id              String      @id @default(uuid())
+  complaintId     String      @unique // Format: TN-TIR-2026-XXXXX
+  category        Category
+  description     String
+  location        String
+  latitude        Float
+  longitude       Float
+  status          Status      @default(SUBMITTED)
+  priority        Priority    @default(MEDIUM)
+  rejectionReason String?
+  assignedAt      DateTime?
+  resolvedAt      DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  reportedById    String
+  reportedBy      User        @relation("ReportedComplaints", fields: [reportedById], references: [id])
+
+  assignedToId    String?
+  assignedTo      User?       @relation("AssignedComplaints", fields: [assignedToId], references: [id])
+
+  photos          Photo[]
+  timeline        Timeline[]
+  fraudFlags      FraudFlag[]
+
+  @@index([status])
+  @@index([reportedById])
+  @@index([assignedToId])
+  @@index([category])
+  @@index([createdAt])
+}
+
+model Photo {
+  id          String    @id @default(uuid())
+  url         String
+  type        PhotoType
+  complaintId String
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  uploadedAt  DateTime  @default(now())
+
+  @@index([complaintId])
+}
+
+model Timeline {
+  id          String    @id @default(uuid())
+  stage       Status
+  timestamp   DateTime  @default(now())
+  officerName String?
+  notes       String?
+  complaintId String
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+
+  @@index([complaintId])
+  @@index([stage])
+}
+
+model FraudFlag {
+  id          String    @id @default(uuid())
+  reason      String
+  score       Int
+  complaintId String
+  complaint   Complaint @relation(fields: [complaintId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@index([complaintId])
+}

@@ -6,7 +6,7 @@ const getBaseUrl = (): string => {
   if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
     return 'http://localhost:3000/api';
   }
-  return 'https://shaggy-grapes-listen.loca.lt/api';
+  return envUrl || '/api';
 };
 
 export const API_URL = getBaseUrl();
@@ -16,9 +16,9 @@ export const api = axios.create({
   withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
-    'bypass-tunnel-reminder': 'true',
   },
 });
+
 
 
 // Attach JWT access token if present in localStorage

@@ -103,13 +103,19 @@ export const OfficerLogin: React.FC = () => {
         navigate(redirectPath || '/officer/dashboard', { replace: true });
       }
     } catch (err: any) {
-      const msg =
-        err.response?.data?.message || 'Login failed. Please verify your officer credentials.';
-      toast.error(msg, { duration: 5000 });
+      const serverMsg = err.response?.data?.message;
+      if (serverMsg) {
+        toast.error(serverMsg, { duration: 5000 });
+      } else if (!err.response || err.response.status >= 404) {
+        toast.error('Backend server unreachable. Backend must be deployed to handle requests.');
+      } else {
+        toast.error('Login failed. Please verify your officer credentials.', { duration: 5000 });
+      }
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center p-4 bg-surface">

@@ -42,13 +42,19 @@ export const ControllerLogin: React.FC = () => {
         navigate(redirectPath || '/admin/dashboard', { replace: true });
       }
     } catch (err: any) {
-      toast.error(
-        err.response?.data?.message || 'Access Denied: Controller verification failed.'
-      );
+      const serverMsg = err.response?.data?.message;
+      if (serverMsg) {
+        toast.error(serverMsg);
+      } else if (!err.response || err.response.status === 404 || err.response.status === 405) {
+        toast.error('Backend server unreachable. Backend must be deployed to handle requests.');
+      } else {
+        toast.error('Access Denied: Controller verification failed.');
+      }
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center p-4 bg-slate-900">

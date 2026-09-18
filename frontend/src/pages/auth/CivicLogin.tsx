@@ -85,11 +85,13 @@ export const CivicLogin: React.FC = () => {
         handleSuccessfulAuth(res.data.user, res.data.accessToken, res.data.refreshToken);
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Google authentication verification failed.');
+      const msg = err.response?.data?.message || (!err.response || err.response.status >= 404 ? 'Backend server unreachable. Backend must be deployed.' : 'Google authentication verification failed.');
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
   };
+
 
   // 2. Mobile OTP Flow (Real Twilio SMS Dispatch)
   const handleSendOtp = async (e: React.FormEvent) => {

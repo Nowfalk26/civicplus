@@ -10,6 +10,7 @@ router.get('/suspicious', authenticate, authorize('ADMIN'), userController.getSu
 router.get('/:id', authenticate, authorize('ADMIN'), userController.getById);
 router.put('/:id/ban', authenticate, authorize('ADMIN'), userController.toggleBan);
 router.put('/:id/fraud-score', authenticate, authorize('ADMIN'), userController.updateFraudScore);
+router.delete('/:id', authenticate, authorize('ADMIN'), userController.deleteUser);
 
 // Controller Officer Approvals
 router.get('/admin/officer-requests', authenticate, authorize('ADMIN'), userController.getOfficerAccessRequests);

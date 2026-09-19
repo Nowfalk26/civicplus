@@ -6,11 +6,49 @@ export const userController = {
   // GET /api/users (Admin only)
   getAll: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
-      const { role, search, page = '1', limit = '50' } = req.query;
+      const { role, search, page = '1', limit = '100' } = req.query;
 
-      let filtered = inMemoryDb.users.map(({ password: _, ...user }) => user);
+      // Filter non-sensitive user attributes safely (Never expose passwords, hashes, tokens, or OTPs)
+      let filtered = inMemoryDb.users.map((u) => {
+        const reportsCount = inMemoryDb.complaints.filter((c) => c.reportedById === u.id).length;
+        const assignedCount = inMemoryDb.complaints.filter((c) => c.assignedToId === u.id).length;
+        const resolvedCount = inMemoryDb.complaints.filter(
+          (c) => c.assignedToId === u.id && c.status === 'RESOLVED'
+        ).length;
 
-      if (role) {
+        let accountStatus = 'ACTIVE';
+        if (u.isBanned) {
+          if (u.role === 'OFFICER' && !u.bannedUntil) {
+            accountStatus = 'PENDING_APPROVAL';
+          } else {
+            accountStatus = 'SUSPENDED';
+          }
+        }
+
+        return {
+          id: u.id,
+          username: u.username,
+          name: u.name || u.username,
+          email: u.email,
+          phone: u.phone,
+          role: u.role,
+          location: u.location,
+          avatarUrl: u.avatarUrl,
+          department: u.department || null,
+          designation: u.designation || null,
+          fraudScore: u.fraudScore || 0,
+          accountStatus,
+          isBanned: u.isBanned,
+          bannedUntil: u.bannedUntil,
+          reportsCount,
+          assignedCount,
+          resolvedCount,
+          createdAt: u.createdAt,
+          updatedAt: u.updatedAt,
+        };
+      });
+
+      if (role && role !== 'ALL') {
         filtered = filtered.filter((u) => u.role === role);
       }
 
@@ -19,20 +57,28 @@ export const userController = {
         filtered = filtered.filter(
           (u) =>
             u.username.toLowerCase().includes(q) ||
+            u.name.toLowerCase().includes(q) ||
             u.email.toLowerCase().includes(q) ||
             u.phone.includes(q) ||
-            u.location.toLowerCase().includes(q)
+            u.location.toLowerCase().includes(q) ||
+            (u.department && u.department.toLowerCase().includes(q))
         );
       }
 
+      // Sort newest accounts first
+      filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
       const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
-      const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 50));
+      const limitNum = Math.min(200, Math.max(1, parseInt(limit as string, 10) || 50));
       const total = filtered.length;
       const offset = (pageNum - 1) * limitNum;
+
+      const stats = inMemoryDb.getStats();
 
       res.json({
         success: true,
         users: filtered.slice(offset, offset + limitNum),
+        stats,
         pagination: {
           total,
           page: pageNum,
@@ -41,6 +87,7 @@ export const userController = {
         },
       });
     } catch (error: any) {
+      console.error('[USERS-API] Error retrieving users:', error);
       res.status(500).json({ success: false, message: 'Failed to retrieve users.' });
     }
   },
@@ -62,7 +109,17 @@ export const userController = {
       const { password: _, ...userSafe } = user;
       res.json({
         success: true,
-        user: userSafe,
+        user: {
+          ...userSafe,
+          reportsCount: userComplaints.length,
+          assignedCount: assignedComplaints.length,
+          resolvedCount: assignedComplaints.filter((c) => c.status === 'RESOLVED').length,
+          accountStatus: user.isBanned
+            ? user.role === 'OFFICER' && !user.bannedUntil
+              ? 'PENDING_APPROVAL'
+              : 'SUSPENDED'
+            : 'ACTIVE',
+        },
         complaints: userComplaints,
         assignedComplaints,
       });
@@ -141,6 +198,35 @@ export const userController = {
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: 'Error updating fraud score.' });
+    }
+  },
+
+  // DELETE /api/users/:id (Admin only)
+  deleteUser: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const { id } = req.params;
+      const user = inMemoryDb.findUserById(id);
+      if (!user) {
+        res.status(404).json({ success: false, message: 'User not found.' });
+        return;
+      }
+
+      if (user.role === 'ADMIN' && req.user?.id === user.id) {
+        res.status(400).json({ success: false, message: 'Cannot delete your own active administrator account.' });
+        return;
+      }
+
+      const deleted = inMemoryDb.deleteUser(id);
+      if (deleted) {
+        res.json({
+          success: true,
+          message: `User account for ${user.username} (${user.email}) has been permanently deleted.`,
+        });
+      } else {
+        res.status(400).json({ success: false, message: 'Failed to delete user.' });
+      }
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Error deleting user account.' });
     }
   },
 

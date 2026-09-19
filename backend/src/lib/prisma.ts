@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import {
   buildSeedData,
   UserRecord,
@@ -26,45 +28,121 @@ export const prisma: any = new Proxy(
   }
 );
 
-
-
-// In-memory fallback repository initialized with seed data
-class InMemoryStore {
+/**
+ * Persistent Data Store
+ * Persists registered users and complaints to a durable JSON database file on disk.
+ * Accounts, sessions, and reports are NEVER wiped when users log out, close tabs, or restart.
+ * Starts clean (0 Civic users, 0 Officers, 0 Reports, 1 Controller Admin) on initial fresh run.
+ */
+class PersistentStore {
   public users: UserRecord[] = [];
   public complaints: ComplaintRecord[] = [];
   public initialized = false;
+  private dbFilePath: string = '';
 
   constructor() {
+    this.resolveDbPath();
     this.init();
+  }
+
+  private resolveDbPath(): string {
+    try {
+      const primaryDir = path.resolve(__dirname, '../data');
+      if (!fs.existsSync(primaryDir)) {
+        fs.mkdirSync(primaryDir, { recursive: true });
+      }
+      this.dbFilePath = path.join(primaryDir, 'persisted_db.json');
+    } catch {
+      // Fallback for restricted/serverless environments
+      this.dbFilePath = path.join(process.cwd(), 'persisted_db.json');
+    }
+    return this.dbFilePath;
   }
 
   public init() {
     if (this.initialized) return;
-    const seed = buildSeedData();
-    this.users = seed.users;
-    this.complaints = seed.complaints;
+
+    let loadedFromDisk = false;
+    try {
+      const targetPath = this.dbFilePath || this.resolveDbPath();
+      if (fs.existsSync(targetPath)) {
+        const raw = fs.readFileSync(targetPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.users)) {
+          this.users = parsed.users;
+          this.complaints = Array.isArray(parsed.complaints) ? parsed.complaints : [];
+          loadedFromDisk = true;
+        }
+      }
+    } catch (err: any) {
+      console.warn('[DATABASE] Persistent store read warning:', err.message);
+    }
+
+    if (!loadedFromDisk) {
+      // Clean initial state (Requirement 15: 0 Civic users, 0 Officers, 0 Reports, 1 Controller)
+      const seed = buildSeedData();
+      this.users = [...seed.users];
+      this.complaints = [];
+      this.persist();
+    } else {
+      // Ensure the designated Controller admin account exists without wiping real users
+      const seed = buildSeedData();
+      const adminSeed = seed.users.find((u) => u.role === 'ADMIN');
+      if (adminSeed && !this.users.some((u) => u.email.toLowerCase() === adminSeed.email.toLowerCase())) {
+        this.users.push(adminSeed);
+        this.persist();
+      }
+    }
+
     this.initialized = true;
     const civicCount = this.users.filter((u) => u.role === 'CITIZEN').length;
     const officerCount = this.users.filter((u) => u.role === 'OFFICER').length;
     console.log(
-      `[DATABASE] Fresh start active: ${civicCount} Civic users, ${officerCount} Officer users, ${this.complaints.length} Complaints. Sole Controller initialized.`
+      `[DATABASE] Persistence active (${loadedFromDisk ? 'restored from disk' : 'fresh initialization'}): ${civicCount} Civic users, ${officerCount} Officer users, ${this.complaints.length} Complaints.`
     );
+  }
+
+  public persist() {
+    try {
+      const targetPath = this.dbFilePath || this.resolveDbPath();
+      const payload = JSON.stringify(
+        {
+          users: this.users,
+          complaints: this.complaints,
+          updatedAt: new Date().toISOString(),
+        },
+        null,
+        2
+      );
+      fs.writeFileSync(targetPath, payload, 'utf-8');
+
+      // Mirror to /tmp on serverless environments if primary is different
+      if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+        try {
+          fs.writeFileSync(path.join('/tmp', 'civicplus_persisted_db.json'), payload, 'utf-8');
+        } catch {}
+      }
+    } catch (err: any) {
+      console.warn('[DATABASE] Notice: Error writing persisted state to disk:', err.message);
+    }
   }
 
   public resetToCleanState() {
     const seed = buildSeedData();
     this.users = [...seed.users];
     this.complaints = [];
-    console.log('[DATABASE] In-memory store reset to clean state (0 Civic, 0 Officers, 0 Reports).');
+    this.persist();
+    console.log('[DATABASE] Store reset to clean state (0 Civic, 0 Officers, 0 Reports, 1 Controller).');
   }
 
   // User operations
   findUserByEmailOrPhone(identifier: string): UserRecord | undefined {
+    const clean = identifier.trim().toLowerCase();
     return this.users.find(
       (u) =>
-        u.email.toLowerCase() === identifier.toLowerCase() ||
+        u.email.toLowerCase() === clean ||
         u.phone === identifier ||
-        u.username.toLowerCase() === identifier.toLowerCase()
+        u.username.toLowerCase() === clean
     );
   }
 
@@ -72,7 +150,10 @@ class InMemoryStore {
     return this.users.find((u) => u.id === id);
   }
 
-  createUser(data: Omit<UserRecord, 'id' | 'createdAt' | 'updatedAt' | 'fraudScore' | 'isBanned'> & Partial<UserRecord>): UserRecord {
+  createUser(
+    data: Omit<UserRecord, 'id' | 'createdAt' | 'updatedAt' | 'fraudScore' | 'isBanned'> &
+      Partial<UserRecord>
+  ): UserRecord {
     const newUser: UserRecord = {
       id: data.id || `usr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       username: data.username,
@@ -92,6 +173,7 @@ class InMemoryStore {
       updatedAt: new Date().toISOString(),
     };
     this.users.push(newUser);
+    this.persist();
     return newUser;
   }
 
@@ -103,13 +185,16 @@ class InMemoryStore {
       ...data,
       updatedAt: new Date().toISOString(),
     };
+    this.persist();
     return this.users[idx];
   }
 
   deleteUser(id: string): boolean {
     const initialLen = this.users.length;
     this.users = this.users.filter((u) => u.id !== id);
-    return this.users.length < initialLen;
+    const deleted = this.users.length < initialLen;
+    if (deleted) this.persist();
+    return deleted;
   }
 
   // Complaint operations
@@ -150,7 +235,6 @@ class InMemoryStore {
       );
     }
 
-    // Sort by createdAt desc
     result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     const total = result.length;
@@ -162,9 +246,14 @@ class InMemoryStore {
     };
   }
 
-  createComplaint(complaint: Omit<ComplaintRecord, 'id' | 'createdAt' | 'updatedAt' | 'timeline' | 'fraudFlags' | 'photos'> & {
-    photos?: { url: string; type: 'BEFORE' | 'AFTER' | 'EVIDENCE' }[];
-  }): ComplaintRecord {
+  createComplaint(
+    complaint: Omit<
+      ComplaintRecord,
+      'id' | 'createdAt' | 'updatedAt' | 'timeline' | 'fraudFlags' | 'photos'
+    > & {
+      photos?: { url: string; type: 'BEFORE' | 'AFTER' | 'EVIDENCE' }[];
+    }
+  ): ComplaintRecord {
     const id = `cmp-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date().toISOString();
 
@@ -200,6 +289,7 @@ class InMemoryStore {
     };
 
     this.complaints.unshift(newRecord);
+    this.persist();
     return newRecord;
   }
 
@@ -212,16 +302,22 @@ class InMemoryStore {
       ...data,
       updatedAt: new Date().toISOString(),
     };
+    this.persist();
     return this.complaints[idx];
   }
 
   deleteComplaint(id: string): boolean {
     const initialLen = this.complaints.length;
     this.complaints = this.complaints.filter((c) => c.id !== id && c.complaintId !== id);
-    return this.complaints.length < initialLen;
+    const deleted = this.complaints.length < initialLen;
+    if (deleted) this.persist();
+    return deleted;
   }
 
-  addTimeline(complaintId: string, entry: Omit<TimelineRecord, 'id' | 'complaintId' | 'timestamp'> & { timestamp?: string }) {
+  addTimeline(
+    complaintId: string,
+    entry: Omit<TimelineRecord, 'id' | 'complaintId' | 'timestamp'> & { timestamp?: string }
+  ) {
     const cmp = this.findComplaintById(complaintId);
     if (!cmp) return null;
     const timelineEntry: TimelineRecord = {
@@ -233,6 +329,7 @@ class InMemoryStore {
       complaintId: cmp.id,
     };
     cmp.timeline.push(timelineEntry);
+    this.persist();
     return timelineEntry;
   }
 
@@ -247,6 +344,7 @@ class InMemoryStore {
       createdAt: new Date().toISOString(),
     };
     cmp.fraudFlags.push(flag);
+    this.persist();
     return flag;
   }
 
@@ -261,10 +359,10 @@ class InMemoryStore {
       uploadedAt: new Date().toISOString(),
     };
     cmp.photos.push(photo);
+    this.persist();
     return photo;
   }
 
-  // Officer queries using existing User store (No new database storage)
   findOfficers(options?: { pendingOnly?: boolean; activeOnly?: boolean }): UserRecord[] {
     return this.users.filter((u) => {
       if (u.role !== 'OFFICER') return false;
@@ -273,7 +371,15 @@ class InMemoryStore {
       return true;
     });
   }
+
+  getStats() {
+    return {
+      citizensCount: this.users.filter((u) => u.role === 'CITIZEN').length,
+      officersCount: this.users.filter((u) => u.role === 'OFFICER').length,
+      adminsCount: this.users.filter((u) => u.role === 'ADMIN').length,
+      complaintsCount: this.complaints.length,
+    };
+  }
 }
 
-export const inMemoryDb = new InMemoryStore();
-
+export const inMemoryDb = new PersistentStore();

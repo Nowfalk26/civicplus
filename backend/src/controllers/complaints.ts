@@ -29,6 +29,7 @@ export const complaintController = {
   // GET /api/complaints
   getAll: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await inMemoryDb.ensureSynced();
       const {
         status,
         category,
@@ -116,13 +117,15 @@ export const complaintController = {
     }
   },
 
-  // POST /api/complaints (Citizen only)
+  // POST /api/complaints
   create: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
       if (!req.user) {
-        res.status(401).json({ success: false, message: 'Unauthorized' });
+        res.status(401).json({ success: false, message: 'Please log in to submit a complaint.' });
         return;
       }
+
+      await inMemoryDb.ensureSynced();
 
       const validation = createComplaintSchema.safeParse(req.body);
       if (!validation.success) {
@@ -247,6 +250,9 @@ export const complaintController = {
 
       // Send SMS acknowledgment
       await smsService.sendComplaintAck(req.user.phone, complaintId, category);
+
+      // Persist complaint and any fraud updates across all serverless instances
+      await inMemoryDb.persistAsync();
 
       res.status(201).json({
         success: true,
@@ -384,6 +390,8 @@ export const complaintController = {
         }
         await emailService.sendComplaintStatusUpdate(citizen.email, complaint.complaintId, status, notes);
       }
+
+      await inMemoryDb.persistAsync();
 
       res.json({
         success: true,

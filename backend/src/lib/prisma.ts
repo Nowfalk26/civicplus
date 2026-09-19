@@ -39,6 +39,10 @@ class PersistentStore {
   public complaints: ComplaintRecord[] = [];
   public initialized = false;
   private dbFilePath: string = '';
+  private cloudStoreUrl: string =
+    process.env.CLOUD_STORE_URL || 'https://extendsclass.com/api/json-storage/bin/dccfafd';
+  private lastSyncedAt: number = 0;
+  private syncPromise: Promise<void> | null = null;
 
   constructor() {
     this.resolveDbPath();
@@ -47,58 +51,121 @@ class PersistentStore {
 
   private resolveDbPath(): string {
     try {
+      if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+        this.dbFilePath = path.join('/tmp', 'civicplus_persisted_db.json');
+        return this.dbFilePath;
+      }
       const primaryDir = path.resolve(__dirname, '../data');
       if (!fs.existsSync(primaryDir)) {
         fs.mkdirSync(primaryDir, { recursive: true });
       }
       this.dbFilePath = path.join(primaryDir, 'persisted_db.json');
     } catch {
-      // Fallback for restricted/serverless environments
-      this.dbFilePath = path.join(process.cwd(), 'persisted_db.json');
+      this.dbFilePath = path.join('/tmp', 'civicplus_persisted_db.json');
     }
     return this.dbFilePath;
   }
 
-  public init() {
+  public async ensureSynced(force: boolean = false): Promise<void> {
+    if (!this.cloudStoreUrl) return;
+
+    // Cache window: avoid re-fetching within 2 seconds unless forced
+    if (!force && Date.now() - this.lastSyncedAt < 2000) {
+      return;
+    }
+
+    if (this.syncPromise) {
+      return this.syncPromise;
+    }
+
+    this.syncPromise = (async () => {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 4000);
+        const res = await fetch(this.cloudStoreUrl, { signal: controller.signal });
+        clearTimeout(timer);
+
+        if (res.ok) {
+          const remote = (await res.json()) as any;
+          if (Array.isArray(remote.users)) {
+            const userMap = new Map<string, UserRecord>();
+            this.users.forEach((u) => userMap.set(u.id, u));
+            remote.users.forEach((ru: UserRecord) => {
+              const existing = userMap.get(ru.id);
+              if (!existing || new Date(ru.updatedAt || 0) >= new Date(existing.updatedAt || 0)) {
+                userMap.set(ru.id, ru);
+              }
+            });
+            this.users = Array.from(userMap.values());
+          }
+
+          if (Array.isArray(remote.complaints)) {
+            const cmpMap = new Map<string, ComplaintRecord>();
+            this.complaints.forEach((c) => cmpMap.set(c.id, c));
+            remote.complaints.forEach((rc: ComplaintRecord) => {
+              const existing = cmpMap.get(rc.id);
+              if (!existing || new Date(rc.updatedAt || 0) >= new Date(existing.updatedAt || 0)) {
+                cmpMap.set(rc.id, rc);
+              }
+            });
+            this.complaints = Array.from(cmpMap.values());
+          }
+
+          this.lastSyncedAt = Date.now();
+        }
+      } catch (err: any) {
+        console.warn('[DATABASE] Cloud sync fetch warning:', err.message);
+      } finally {
+        this.syncPromise = null;
+      }
+    })();
+
+    return this.syncPromise;
+  }
+
+  public async init() {
     if (this.initialized) return;
 
     let loadedFromDisk = false;
     try {
       const targetPath = this.dbFilePath || this.resolveDbPath();
-      if (fs.existsSync(targetPath)) {
-        const raw = fs.readFileSync(targetPath, 'utf-8');
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed.users)) {
-          this.users = parsed.users;
-          this.complaints = Array.isArray(parsed.complaints) ? parsed.complaints : [];
-          loadedFromDisk = true;
+      const pathsToCheck = [
+        targetPath,
+        path.join('/tmp', 'civicplus_persisted_db.json'),
+      ];
+
+      for (const p of pathsToCheck) {
+        if (fs.existsSync(p)) {
+          const raw = fs.readFileSync(p, 'utf-8');
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed.users)) {
+            this.users = parsed.users;
+            this.complaints = Array.isArray(parsed.complaints) ? parsed.complaints : [];
+            loadedFromDisk = true;
+            break;
+          }
         }
       }
     } catch (err: any) {
-      console.warn('[DATABASE] Persistent store read warning:', err.message);
+      console.warn('[DATABASE] Local persistent store read notice:', err.message);
     }
 
-    if (!loadedFromDisk) {
-      // Clean initial state (Requirement 15: 0 Civic users, 0 Officers, 0 Reports, 1 Controller)
-      const seed = buildSeedData();
-      this.users = [...seed.users];
-      this.complaints = [];
+    // Trigger initial cloud synchronization
+    this.ensureSynced(true).catch(() => {});
+
+    // Ensure Controller admin seed user is present
+    const seed = buildSeedData();
+    const adminSeed = seed.users.find((u) => u.role === 'ADMIN');
+    if (adminSeed && !this.users.some((u) => u.email.toLowerCase() === adminSeed.email.toLowerCase())) {
+      this.users.push(adminSeed);
       this.persist();
-    } else {
-      // Ensure the designated Controller admin account exists without wiping real users
-      const seed = buildSeedData();
-      const adminSeed = seed.users.find((u) => u.role === 'ADMIN');
-      if (adminSeed && !this.users.some((u) => u.email.toLowerCase() === adminSeed.email.toLowerCase())) {
-        this.users.push(adminSeed);
-        this.persist();
-      }
     }
 
     this.initialized = true;
     const civicCount = this.users.filter((u) => u.role === 'CITIZEN').length;
     const officerCount = this.users.filter((u) => u.role === 'OFFICER').length;
     console.log(
-      `[DATABASE] Persistence active (${loadedFromDisk ? 'restored from disk' : 'fresh initialization'}): ${civicCount} Civic users, ${officerCount} Officer users, ${this.complaints.length} Complaints.`
+      `[DATABASE] Persistence active (${loadedFromDisk ? 'restored from cache' : 'cloud synchronized'}): ${civicCount} Civic users, ${officerCount} Officer users, ${this.complaints.length} Complaints.`
     );
   }
 
@@ -114,16 +181,61 @@ class PersistentStore {
         null,
         2
       );
-      fs.writeFileSync(targetPath, payload, 'utf-8');
 
-      // Mirror to /tmp on serverless environments if primary is different
-      if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+      // 1. Write to local cache / /tmp
+      try {
+        fs.writeFileSync(targetPath, payload, 'utf-8');
+      } catch {
         try {
           fs.writeFileSync(path.join('/tmp', 'civicplus_persisted_db.json'), payload, 'utf-8');
         } catch {}
       }
+
+      // 2. Write to Cloud Store asynchronously
+      if (this.cloudStoreUrl) {
+        fetch(this.cloudStoreUrl, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: payload,
+        })
+          .then(() => {
+            this.lastSyncedAt = Date.now();
+          })
+          .catch((err) => {
+            console.warn('[DATABASE] Notice: Error writing to cloud store:', err.message);
+          });
+      }
     } catch (err: any) {
-      console.warn('[DATABASE] Notice: Error writing persisted state to disk:', err.message);
+      console.warn('[DATABASE] Notice: Error writing persisted state:', err.message);
+    }
+  }
+
+  public async persistAsync(): Promise<void> {
+    this.persist();
+    if (!this.cloudStoreUrl) return;
+
+    try {
+      const payload = JSON.stringify(
+        {
+          users: this.users,
+          complaints: this.complaints,
+          updatedAt: new Date().toISOString(),
+        },
+        null,
+        2
+      );
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 4000);
+      await fetch(this.cloudStoreUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: payload,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      this.lastSyncedAt = Date.now();
+    } catch (err: any) {
+      console.warn('[DATABASE] Cloud store write warning:', err.message);
     }
   }
 
@@ -142,8 +254,14 @@ class PersistentStore {
       (u) =>
         u.email.toLowerCase() === clean ||
         u.phone === identifier ||
-        u.username.toLowerCase() === clean
+        u.username.toLowerCase() === clean ||
+        (u.authProviderUserId && u.authProviderUserId === identifier)
     );
+  }
+
+  findUserByAuthProviderId(authProviderUserId: string): UserRecord | undefined {
+    if (!authProviderUserId) return undefined;
+    return this.users.find((u) => u.authProviderUserId === authProviderUserId);
   }
 
   findUserById(id: string): UserRecord | undefined {
@@ -162,8 +280,9 @@ class PersistentStore {
       name: data.name || data.username,
       email: cleanEmail,
       phone: data.phone,
-      password: data.password,
+      password: data.password || '',
       role: data.role || 'CITIZEN',
+      authProviderUserId: data.authProviderUserId || null,
       location: data.location || 'Tamil Nadu',
       avatarUrl: data.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
       department: data.department,

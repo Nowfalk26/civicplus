@@ -6,6 +6,7 @@ export const userController = {
   // GET /api/users (Admin only)
   getAll: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await inMemoryDb.ensureSynced();
       const { role, search, page = '1', limit = '100' } = req.query;
 
       // Filter non-sensitive user attributes safely (Never expose passwords, hashes, tokens, or OTPs)
@@ -267,6 +268,7 @@ export const userController = {
   // -------------------------------------------------------------
   getOfficerAccessRequests: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await inMemoryDb.ensureSynced();
       const { status } = req.query;
       
       // Query officers directly from existing User storage
@@ -349,6 +351,7 @@ export const userController = {
         approvedById: req.user?.id || 'admin-controller',
         decisionNotes: notes || 'Approved by Controller',
       });
+      await inMemoryDb.persistAsync();
 
       // Send dispatch notification email with temporary password
       const { emailService } = await import('../services/email');
@@ -398,6 +401,7 @@ export const userController = {
         isBanned: true,
         decisionNotes: notes || 'Departmental roster verification rejected by Controller',
       });
+      await inMemoryDb.persistAsync();
 
       const { emailService } = await import('../services/email');
       await emailService.sendOfficerRejectionEmail(

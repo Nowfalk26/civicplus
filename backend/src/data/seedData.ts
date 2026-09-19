@@ -8,6 +8,7 @@ export interface UserRecord {
   phone: string;
   password: string;
   role: 'CITIZEN' | 'OFFICER' | 'ADMIN';
+  authProviderUserId?: string | null;
   location: string;
   avatarUrl?: string;
   department?: string;

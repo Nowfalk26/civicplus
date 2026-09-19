@@ -382,11 +382,16 @@ export const authController = {
         return;
       }
 
+      // Synchronize latest database state across devices
+      await inMemoryDb.ensureSynced();
+
       // Cryptographically verify token with official Google Identity Service
       const googleUser = await authProviderService.verifyGoogleToken(token);
-      const email = googleUser.email;
+      const email = googleUser.email.toLowerCase().trim();
 
-      let user = inMemoryDb.findUserByEmailOrPhone(email);
+      // Unique identity lookup: check authProviderUserId first, then normalized verified email
+      let user = inMemoryDb.findUserByAuthProviderId(googleUser.googleId) || inMemoryDb.findUserByEmailOrPhone(email);
+
       if (user && user.role !== 'CITIZEN') {
         res.status(403).json({
           success: false,
@@ -405,13 +410,22 @@ export const authController = {
         user = inMemoryDb.createUser({
           username: generatedUsername,
           name: googleUser.name || 'Civic Resident',
-          email: email.toLowerCase(),
+          email,
           phone: `+91${Math.floor(6000000000 + Math.random() * 3999999999)}`,
+          authProviderUserId: googleUser.googleId,
           password: dummyPassword,
           role: 'CITIZEN',
           location: 'Chennai, Tamil Nadu',
           avatarUrl: googleUser.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
         });
+        await inMemoryDb.persistAsync();
+      } else if (!user.authProviderUserId) {
+        // Link immutable Google ID if previously registered
+        user = inMemoryDb.updateUser(user.id, {
+          authProviderUserId: googleUser.googleId,
+          avatarUrl: user.avatarUrl || googleUser.avatarUrl,
+        }) || user;
+        await inMemoryDb.persistAsync();
       }
 
       if (user.isBanned) {
@@ -470,7 +484,10 @@ export const authController = {
       // Cryptographically verify real SMS OTP with SMS provider
       await authProviderService.verifySmsOtp(cleanPhone, otp);
 
-      let user = inMemoryDb.users.find((u) => u.phone === cleanPhone);
+      // Ensure database state is synchronized across instances
+      await inMemoryDb.ensureSynced();
+
+      let user = inMemoryDb.findUserByAuthProviderId(cleanPhone) || inMemoryDb.findUserByEmailOrPhone(cleanPhone);
 
       if (user && user.role !== 'CITIZEN') {
         res.status(403).json({
@@ -488,11 +505,13 @@ export const authController = {
           name: name || `Resident ${randomDigits}`,
           email: `citizen_${randomDigits}@tn.gov.in.demo`,
           phone: cleanPhone,
+          authProviderUserId: cleanPhone,
           password: dummyPassword,
           role: 'CITIZEN',
           location: location || 'Chennai, Tamil Nadu',
           avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
         });
+        await inMemoryDb.persistAsync();
       }
 
       if (user.isBanned) {
@@ -597,6 +616,9 @@ export const authController = {
         return;
       }
 
+      // Ensure database state is synchronized across instances
+      await inMemoryDb.ensureSynced();
+
       const normalizedEmail = email.toLowerCase().trim();
 
       // Check if user already exists in the existing User storage
@@ -635,6 +657,7 @@ export const authController = {
             isApproved: false,
             needsPasswordChange: true,
           });
+          await inMemoryDb.persistAsync();
 
           const { password: _, ...userSafe } = updated!;
           res.status(200).json({
@@ -672,6 +695,7 @@ export const authController = {
         needsPasswordChange: true,
         isBanned: false,
       });
+      await inMemoryDb.persistAsync();
 
       console.log(`[OFFICER-REGISTRATION] New officer registered in pending state: ${name} (${normalizedEmail}) for ${department}.`);
 
@@ -694,6 +718,9 @@ export const authController = {
         res.status(400).json({ success: false, message: 'Approved officer email and password are required.' });
         return;
       }
+
+      // Ensure database state is synchronized across instances
+      await inMemoryDb.ensureSynced();
 
       const normalizedEmail = email.toLowerCase().trim();
       const user = inMemoryDb.users.find((u) => u.email.toLowerCase() === normalizedEmail);
@@ -771,6 +798,9 @@ export const authController = {
         res.status(400).json({ success: false, message: 'Google OAuth credential / ID token is required.' });
         return;
       }
+
+      // Ensure database state is synchronized across instances
+      await inMemoryDb.ensureSynced();
 
       // Verify token cryptographically with official Google identity provider
       const googleUser = await authProviderService.verifyGoogleToken(token);
@@ -867,6 +897,7 @@ export const authController = {
         approvalStatus: 'APPROVED',
         isApproved: true,
       });
+      await inMemoryDb.persistAsync();
 
       console.log(`[OFFICER-AUTH] Officer ${user.email} successfully updated permanent password.`);
 

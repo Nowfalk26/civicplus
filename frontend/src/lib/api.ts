@@ -2,11 +2,17 @@ import axios from 'axios';
 
 const getBaseUrl = (): string => {
   const envUrl = (import.meta as unknown as { env: { VITE_API_URL?: string } }).env?.VITE_API_URL;
-  if (envUrl && envUrl.startsWith('http')) return envUrl;
-  if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
-    return 'http://localhost:3000/api';
+  if (typeof window !== 'undefined') {
+    const isLocal = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (isLocal) {
+      return envUrl && envUrl.startsWith('http') ? envUrl : 'http://localhost:3000/api';
+    }
   }
-  return envUrl || 'https://civicplus-backend.vercel.app/api';
+  // In production / deployed domain (e.g., Vercel, mobile, cross-device)
+  if (envUrl && envUrl.startsWith('http') && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+    return envUrl;
+  }
+  return 'https://civicplus-backend.vercel.app/api';
 };
 
 

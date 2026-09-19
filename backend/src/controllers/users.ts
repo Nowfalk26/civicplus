@@ -18,12 +18,15 @@ export const userController = {
 
         let accountStatus = 'ACTIVE';
         if (u.isBanned) {
-          if (u.role === 'OFFICER' && !u.bannedUntil) {
-            accountStatus = 'PENDING_APPROVAL';
-          } else {
-            accountStatus = 'SUSPENDED';
-          }
+          accountStatus = 'SUSPENDED';
+        } else if (u.role === 'OFFICER' && u.approvalStatus === 'PENDING') {
+          accountStatus = 'PENDING_APPROVAL';
         }
+
+        const isApproved =
+          u.role !== 'OFFICER' ||
+          (u.approvalStatus === 'APPROVED' && !u.isBanned) ||
+          (!u.isBanned && u.approvalStatus !== 'PENDING' && u.approvalStatus !== 'REJECTED');
 
         return {
           id: u.id,
@@ -36,6 +39,9 @@ export const userController = {
           avatarUrl: u.avatarUrl,
           department: u.department || null,
           designation: u.designation || null,
+          approvalStatus: u.approvalStatus || (u.role === 'OFFICER' ? (u.isBanned ? 'PENDING' : 'APPROVED') : 'APPROVED'),
+          isApproved,
+          needsPasswordChange: u.needsPasswordChange || false,
           fraudScore: u.fraudScore || 0,
           accountStatus,
           isBanned: u.isBanned,
@@ -267,9 +273,15 @@ export const userController = {
       let officers = inMemoryDb.users.filter((u) => u.role === 'OFFICER');
 
       if (status === 'PENDING') {
-        officers = officers.filter((u) => u.isBanned);
+        officers = officers.filter(
+          (u) => u.approvalStatus === 'PENDING' || (u.isBanned && !u.bannedUntil)
+        );
       } else if (status === 'APPROVED') {
-        officers = officers.filter((u) => !u.isBanned);
+        officers = officers.filter(
+          (u) => u.approvalStatus === 'APPROVED' && !u.isBanned
+        );
+      } else if (status === 'REJECTED') {
+        officers = officers.filter((u) => u.approvalStatus === 'REJECTED');
       }
 
       // Map existing user records to the display format expected by the Controller UI
@@ -281,7 +293,12 @@ export const userController = {
         department: u.department || 'Civic Administration',
         designation: u.designation || 'Field Inspector',
         district: u.location,
-        status: u.isBanned ? 'PENDING' : 'APPROVED',
+        governmentIdProof: u.governmentIdProof || 'TN-OFFICER-VERIFIED',
+        idProofType: u.idProofType || 'TN_CIVIC_BADGE',
+        reason: u.requestReason || 'Official civic department allocation',
+        decisionNotes: u.decisionNotes,
+        status: u.approvalStatus || (u.isBanned ? 'PENDING' : 'APPROVED'),
+        isApproved: u.approvalStatus === 'APPROVED' && !u.isBanned,
         createdAt: u.createdAt,
       }));
 
@@ -307,7 +324,7 @@ export const userController = {
         return;
       }
 
-      if (!user.isBanned) {
+      if (user.approvalStatus === 'APPROVED' && !user.isBanned) {
         res.status(400).json({
           success: false,
           message: 'This officer account is already active and approved.',
@@ -319,10 +336,18 @@ export const userController = {
       const rawTempPassword = `TNOfficer@${Math.floor(1000 + Math.random() * 9000)}`;
       const hashedTempPassword = await (await import('bcryptjs')).default.hash(rawTempPassword, 10);
 
-      // Activate the officer directly in existing User model (isBanned: false)
+      // Activate and approve the officer directly in User model
       const updatedUser = inMemoryDb.updateUser(user.id, {
         password: hashedTempPassword,
+        role: 'OFFICER',
+        approvalStatus: 'APPROVED',
+        isApproved: true,
+        needsPasswordChange: true,
         isBanned: false,
+        bannedUntil: null,
+        approvedAt: new Date().toISOString(),
+        approvedById: req.user?.id || 'admin-controller',
+        decisionNotes: notes || 'Approved by Controller',
       });
 
       // Send dispatch notification email with temporary password
@@ -340,8 +365,14 @@ export const userController = {
       res.json({
         success: true,
         message: `Officer access approved. Temporary password has been dispatched to ${user.email}.`,
-        tempPassword: rawTempPassword, // Returned in demo API response for instant verification
-        officer: userSafe,
+        tempPassword: rawTempPassword,
+        approved: true,
+        officer: {
+          ...userSafe,
+          approvalStatus: 'APPROVED',
+          isApproved: true,
+          needsPasswordChange: true,
+        },
       });
     } catch (error: any) {
       console.error('Error approving officer request:', error);
@@ -360,8 +391,13 @@ export const userController = {
         return;
       }
 
-      // Remove unapproved officer from existing User storage
-      inMemoryDb.deleteUser(id);
+      // Update unapproved officer to rejected state
+      inMemoryDb.updateUser(user.id, {
+        approvalStatus: 'REJECTED',
+        isApproved: false,
+        isBanned: true,
+        decisionNotes: notes || 'Departmental roster verification rejected by Controller',
+      });
 
       const { emailService } = await import('../services/email');
       await emailService.sendOfficerRejectionEmail(
@@ -374,7 +410,7 @@ export const userController = {
 
       res.json({
         success: true,
-        message: 'Officer access application rejected and record purged.',
+        message: 'Officer access application rejected.',
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: 'Failed to reject officer access request.' });

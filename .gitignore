@@ -32,3 +32,4 @@ Thumbs.db
 # Temporary files & tests
 coverage/
 .turbo/
+*persisted_db.json

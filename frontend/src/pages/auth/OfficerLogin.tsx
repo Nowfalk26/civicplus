@@ -64,8 +64,18 @@ export const OfficerLogin: React.FC = () => {
       });
 
       if (res.data?.success) {
-        const { user, accessToken, refreshToken } = res.data;
+        const { user, accessToken, refreshToken, needsPasswordChange } = res.data;
         setAuth(user, accessToken, refreshToken);
+
+        if (needsPasswordChange || user?.needsPasswordChange) {
+          toast(
+            'Temporary password detected. You must configure your permanent officer password now.',
+            { icon: '🔐' }
+          );
+          navigate('/officer/set-password', { replace: true });
+          return;
+        }
+
         toast.success(`Welcome, Officer ${user.name || user.username}!`);
         const redirectPath = (location.state as any)?.from?.pathname;
         navigate(redirectPath || '/officer/dashboard', { replace: true });
@@ -89,9 +99,9 @@ export const OfficerLogin: React.FC = () => {
         const { user, accessToken, refreshToken, needsPasswordChange } = res.data;
         setAuth(user, accessToken, refreshToken);
 
-        if (needsPasswordChange) {
+        if (needsPasswordChange || user?.needsPasswordChange) {
           toast(
-            'Temporary password detected. You must set your permanent officer password now.',
+            'Temporary password detected. You must configure your permanent officer password now.',
             { icon: '🔐' }
           );
           navigate('/officer/set-password', { replace: true });
@@ -105,9 +115,9 @@ export const OfficerLogin: React.FC = () => {
     } catch (err: any) {
       const serverMsg = err.response?.data?.message;
       if (serverMsg) {
-        toast.error(serverMsg, { duration: 5000 });
+        toast.error(serverMsg, { duration: 6000 });
       } else if (!err.response || err.response.status >= 404) {
-        toast.error('Backend server unreachable. Backend must be deployed to handle requests.');
+        toast.error('Backend server unreachable. Backend must be running to handle requests.');
       } else {
         toast.error('Login failed. Please verify your officer credentials.', { duration: 5000 });
       }

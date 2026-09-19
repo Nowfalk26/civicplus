@@ -56,7 +56,7 @@ export async function authenticate(
     if (!token) {
       res.status(401).json({
         success: false,
-        message: 'Authentication required. Please log in to proceed.',
+        message: 'Please log in to continue.',
       });
       return;
     }
@@ -67,7 +67,7 @@ export async function authenticate(
     if (!user) {
       res.status(401).json({
         success: false,
-        message: 'User associated with this token was not found.',
+        message: 'Please log in to continue.',
       });
       return;
     }
@@ -95,7 +95,7 @@ export async function authenticate(
   } catch (error) {
     res.status(401).json({
       success: false,
-      message: 'Invalid or expired access token. Please refresh or login again.',
+      message: 'Please log in to continue.',
     });
   }
 }
@@ -106,7 +106,7 @@ export async function authenticate(
 export function authorize(...allowedRoles: ('CITIZEN' | 'OFFICER' | 'ADMIN')[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {
-      res.status(401).json({ success: false, message: 'Unauthorized request.' });
+      res.status(401).json({ success: false, message: 'Please log in to continue.' });
       return;
     }
 
@@ -116,6 +116,23 @@ export function authorize(...allowedRoles: ('CITIZEN' | 'OFFICER' | 'ADMIN')[]) 
         message: `Forbidden. Role '${req.user.role}' lacks permissions for this action. Required: ${allowedRoles.join(' or ')}`,
       });
       return;
+    }
+
+    // Authoritative check for Officer access approval
+    if (req.user.role === 'OFFICER' && allowedRoles.includes('OFFICER')) {
+      const isApproved =
+        req.user.approvalStatus === 'APPROVED' ||
+        req.user.isApproved === true ||
+        (!req.user.isBanned && req.user.approvalStatus !== 'PENDING' && req.user.approvalStatus !== 'REJECTED');
+
+      if (!isApproved) {
+        res.status(403).json({
+          success: false,
+          message: 'Your Officer account has not been approved by the Controller yet.',
+          approvalStatus: req.user.approvalStatus || 'PENDING',
+        });
+        return;
+      }
     }
 
     next();

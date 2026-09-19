@@ -12,6 +12,7 @@ export interface User {
   department?: string;
   designation?: string;
   approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  isApproved?: boolean;
   needsPasswordChange?: boolean;
   approvedAt?: string | null;
   approvedById?: string | null;

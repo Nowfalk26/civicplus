@@ -16,6 +16,9 @@ interface UserItem {
   avatarUrl?: string;
   department?: string | null;
   designation?: string | null;
+  approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  isApproved?: boolean;
+  needsPasswordChange?: boolean;
   fraudScore: number;
   accountStatus: 'ACTIVE' | 'PENDING_APPROVAL' | 'SUSPENDED';
   isBanned: boolean;
@@ -645,10 +648,14 @@ export const AdminUsers: React.FC = () => {
                             <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
                             Suspended
                           </span>
-                        ) : u.accountStatus === 'PENDING_APPROVAL' ? (
+                        ) : u.role === 'OFFICER' && (!u.isApproved || u.approvalStatus === 'PENDING') ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
                             <span className="w-1.5 h-1.5 rounded-full bg-amber-600 animate-ping" />
-                            Pending Review
+                            Pending Approval
+                          </span>
+                        ) : u.role === 'OFFICER' && u.approvalStatus === 'REJECTED' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-800 border border-gray-300">
+                            Rejected
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">

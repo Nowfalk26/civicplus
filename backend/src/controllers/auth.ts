@@ -263,11 +263,24 @@ export const authController = {
 
   getMe: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     if (!req.user) {
-      res.status(401).json({ success: false, message: 'Not authenticated.' });
+      res.status(401).json({ success: false, message: 'Please log in to continue.' });
       return;
     }
     const { password: _, ...userSafe } = req.user;
-    res.json({ success: true, user: userSafe });
+    const isApproved =
+      req.user.role !== 'OFFICER' ||
+      (req.user.approvalStatus === 'APPROVED' && !req.user.isBanned) ||
+      (!req.user.isBanned && req.user.approvalStatus !== 'PENDING' && req.user.approvalStatus !== 'REJECTED');
+
+    res.json({
+      success: true,
+      user: {
+        ...userSafe,
+        approvalStatus: req.user.approvalStatus || (req.user.role === 'OFFICER' ? (req.user.isBanned ? 'PENDING' : 'APPROVED') : 'APPROVED'),
+        isApproved,
+        needsPasswordChange: req.user.needsPasswordChange || false,
+      },
+    });
   },
 
   updateMe: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
@@ -574,7 +587,7 @@ export const authController = {
   // -------------------------------------------------------------
   officerRequestAccess: async (req: Request, res: Response): Promise<void> => {
     try {
-      const { name, email, phone, department, designation, governmentIdProof } = req.body;
+      const { name, email, phone, department, designation, governmentIdProof, idProofType, reason } = req.body;
 
       if (!name || !email || !phone || !department || !designation) {
         res.status(400).json({
@@ -589,16 +602,46 @@ export const authController = {
       // Check if user already exists in the existing User storage
       const existingUser = inMemoryDb.users.find((u) => u.email.toLowerCase() === normalizedEmail);
       if (existingUser) {
-        if (!existingUser.isBanned) {
-          res.status(400).json({
-            success: false,
-            message: 'An active approved officer account with this email already exists. Please log in directly.',
-          });
-          return;
+        if (existingUser.role === 'OFFICER') {
+          const isApproved =
+            existingUser.approvalStatus === 'APPROVED' ||
+            (!existingUser.isBanned && existingUser.approvalStatus !== 'PENDING' && existingUser.approvalStatus !== 'REJECTED');
+
+          if (isApproved && !existingUser.isBanned) {
+            res.status(400).json({
+              success: false,
+              message: 'An active approved officer account with this email already exists. Please log in directly.',
+            });
+            return;
+          } else {
+            res.status(400).json({
+              success: false,
+              message: 'An access application for this official email is already pending Controller review.',
+            });
+            return;
+          }
         } else {
-          res.status(400).json({
-            success: false,
-            message: 'An access application for this official email is already pending Controller review.',
+          // Existing citizen requesting officer upgrade: transition role to OFFICER in PENDING approval state
+          const updated = inMemoryDb.updateUser(existingUser.id, {
+            name,
+            phone,
+            role: 'OFFICER',
+            department,
+            designation,
+            governmentIdProof,
+            idProofType: idProofType || 'TN_CIVIC_BADGE',
+            requestReason: reason,
+            approvalStatus: 'PENDING',
+            isApproved: false,
+            needsPasswordChange: true,
+          });
+
+          const { password: _, ...userSafe } = updated!;
+          res.status(200).json({
+            success: true,
+            message: 'Officer access request submitted successfully. It is now awaiting Controller review and activation.',
+            officer: userSafe,
+            request: userSafe,
           });
           return;
         }
@@ -610,7 +653,7 @@ export const authController = {
         '_' +
         Math.floor(100 + Math.random() * 900);
 
-      // Store unapproved officer directly inside existing User model in unapproved state (isBanned = true)
+      // Store unapproved officer in PENDING approval state
       const createdUser = inMemoryDb.createUser({
         username,
         name,
@@ -620,17 +663,24 @@ export const authController = {
         role: 'OFFICER',
         department,
         designation,
+        governmentIdProof,
+        idProofType: idProofType || 'TN_CIVIC_BADGE',
+        requestReason: reason,
         location: 'Tamil Nadu',
-        isBanned: true, // Unapproved pending Controller activation
+        approvalStatus: 'PENDING',
+        isApproved: false,
+        needsPasswordChange: true,
+        isBanned: false,
       });
 
-      console.log(`[OFFICER-REGISTRATION] New officer registered in unapproved state: ${name} (${normalizedEmail}) for ${department}.`);
+      console.log(`[OFFICER-REGISTRATION] New officer registered in pending state: ${name} (${normalizedEmail}) for ${department}.`);
 
       const { password: _, ...userSafe } = createdUser;
       res.status(201).json({
         success: true,
         message: 'Officer access request submitted successfully. It is now awaiting Controller review and activation.',
         officer: userSafe,
+        request: userSafe,
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: 'Error submitting officer access request.' });
@@ -648,7 +698,7 @@ export const authController = {
       const normalizedEmail = email.toLowerCase().trim();
       const user = inMemoryDb.users.find((u) => u.email.toLowerCase() === normalizedEmail);
 
-      // Verify email exists and role is OFFICER
+      // 1. Verify authenticated identity exists and role is OFFICER
       if (!user || user.role !== 'OFFICER') {
         res.status(401).json({
           success: false,
@@ -657,16 +707,32 @@ export const authController = {
         return;
       }
 
-      // Check approval status: If isBanned is true, they have not been activated by Controller
-      if (user.isBanned) {
+      // 2. Authoritative check: Is this identity an approved Officer? (Requirement 4 & 9)
+      const isApproved =
+        user.approvalStatus === 'APPROVED' ||
+        user.isApproved === true ||
+        (!user.isBanned && user.approvalStatus !== 'PENDING' && user.approvalStatus !== 'REJECTED');
+
+      if (!isApproved) {
         res.status(403).json({
           success: false,
-          message: 'Your officer access application is currently PENDING review by the Controller. Access is restricted until Controller activation.',
+          message: 'Your Officer account has not been approved by the Controller yet.',
           isPending: true,
+          approvalStatus: user.approvalStatus || 'PENDING',
         });
         return;
       }
 
+      // 3. Verify account is not suspended
+      if (user.isBanned) {
+        res.status(403).json({
+          success: false,
+          message: 'Your Officer account is currently suspended by administration.',
+        });
+        return;
+      }
+
+      // 4. Verify password
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
         res.status(401).json({ success: false, message: 'Invalid credentials. Password incorrect.' });
@@ -676,11 +742,19 @@ export const authController = {
       const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
       const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
 
+      const needsPasswordChange = user.needsPasswordChange !== false;
+
       const { password: _, ...userSafe } = user;
       res.json({
         success: true,
         message: 'Officer login successful.',
-        user: userSafe,
+        user: {
+          ...userSafe,
+          approvalStatus: 'APPROVED',
+          isApproved: true,
+          needsPasswordChange,
+        },
+        needsPasswordChange,
         accessToken,
         refreshToken,
       });
@@ -711,11 +785,26 @@ export const authController = {
         return;
       }
 
+      // Authoritative check: Is this identity an approved Officer? (Requirement 4 & 9)
+      const isApproved =
+        user.approvalStatus === 'APPROVED' ||
+        user.isApproved === true ||
+        (!user.isBanned && user.approvalStatus !== 'PENDING' && user.approvalStatus !== 'REJECTED');
+
+      if (!isApproved) {
+        res.status(403).json({
+          success: false,
+          message: 'Your Officer account has not been approved by the Controller yet.',
+          isPending: true,
+          approvalStatus: user.approvalStatus || 'PENDING',
+        });
+        return;
+      }
+
       if (user.isBanned) {
         res.status(403).json({
           success: false,
-          message: `Access denied. Officer account (${email}) is pending review or has not been activated by the Controller.`,
-          isPending: true,
+          message: `Access denied. Officer account (${email}) is currently suspended.`,
         });
         return;
       }
@@ -727,7 +816,13 @@ export const authController = {
       res.json({
         success: true,
         message: 'Officer authenticated via Google OAuth successfully.',
-        user: userSafe,
+        user: {
+          ...userSafe,
+          approvalStatus: 'APPROVED',
+          isApproved: true,
+          needsPasswordChange: false,
+        },
+        needsPasswordChange: false,
         accessToken,
         refreshToken,
       });
@@ -768,6 +863,9 @@ export const authController = {
       const hashedPassword = await bcrypt.hash(newPassword, 10);
       const updated = inMemoryDb.updateUser(user.id, {
         password: hashedPassword,
+        needsPasswordChange: false,
+        approvalStatus: 'APPROVED',
+        isApproved: true,
       });
 
       console.log(`[OFFICER-AUTH] Officer ${user.email} successfully updated permanent password.`);
@@ -776,7 +874,12 @@ export const authController = {
       res.json({
         success: true,
         message: 'Permanent password has been configured successfully. Full officer dashboard access enabled.',
-        user: userSafe,
+        user: {
+          ...userSafe,
+          approvalStatus: 'APPROVED',
+          isApproved: true,
+          needsPasswordChange: false,
+        },
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: 'Error setting new permanent password.' });

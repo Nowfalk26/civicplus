@@ -12,6 +12,15 @@ export interface UserRecord {
   avatarUrl?: string;
   department?: string;
   designation?: string;
+  governmentIdProof?: string;
+  idProofType?: string;
+  requestReason?: string;
+  approvalStatus?: 'PENDING' | 'APPROVED' | 'REJECTED';
+  isApproved?: boolean;
+  needsPasswordChange?: boolean;
+  approvedAt?: string | null;
+  approvedById?: string | null;
+  decisionNotes?: string | null;
   fraudScore: number;
   isBanned: boolean;
   bannedUntil?: string | null;

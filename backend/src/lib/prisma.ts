@@ -154,18 +154,29 @@ class PersistentStore {
     data: Omit<UserRecord, 'id' | 'createdAt' | 'updatedAt' | 'fraudScore' | 'isBanned'> &
       Partial<UserRecord>
   ): UserRecord {
+    const isOfficer = (data.role || 'CITIZEN') === 'OFFICER';
+    const cleanEmail = data.email.trim().toLowerCase();
     const newUser: UserRecord = {
       id: data.id || `usr-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       username: data.username,
       name: data.name || data.username,
-      email: data.email,
+      email: cleanEmail,
       phone: data.phone,
       password: data.password,
       role: data.role || 'CITIZEN',
-      location: data.location,
+      location: data.location || 'Tamil Nadu',
       avatarUrl: data.avatarUrl || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
       department: data.department,
       designation: data.designation,
+      governmentIdProof: data.governmentIdProof,
+      idProofType: data.idProofType,
+      requestReason: data.requestReason,
+      approvalStatus: data.approvalStatus || (isOfficer ? 'PENDING' : 'APPROVED'),
+      isApproved: data.isApproved !== undefined ? data.isApproved : (isOfficer ? false : true),
+      needsPasswordChange: data.needsPasswordChange !== undefined ? data.needsPasswordChange : (isOfficer ? true : false),
+      approvedAt: data.approvedAt || null,
+      approvedById: data.approvedById || null,
+      decisionNotes: data.decisionNotes || null,
       fraudScore: data.fraudScore || 0,
       isBanned: data.isBanned || false,
       bannedUntil: data.bannedUntil || null,

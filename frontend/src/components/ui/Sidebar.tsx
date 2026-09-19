@@ -22,6 +22,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       labelTa: 'நேரடி வரைபடம்',
     },
     {
+      to: '/citizen/directions',
+      icon: 'alt_route',
+      labelEn: 'Directions & Reports',
+      labelTa: 'வழித்தடம் & புகார்கள்',
+    },
+    {
       to: '/citizen/report',
       icon: 'add_circle',
       labelEn: 'Report Issue',

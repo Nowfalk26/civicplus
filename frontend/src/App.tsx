@@ -20,6 +20,7 @@ import { OfficerSetPassword } from './pages/auth/OfficerSetPassword';
 
 // Citizen Portal Pages
 import { CitizenDashboard } from './pages/citizen/CitizenDashboard';
+import { RouteReports } from './pages/citizen/RouteReports';
 import { ReportProblem } from './pages/citizen/ReportProblem';
 import { MyComplaints } from './pages/citizen/MyComplaints';
 import { ComplaintDetail } from './pages/citizen/ComplaintDetail';
@@ -104,6 +105,22 @@ export const App: React.FC = () => {
               element={
                 <ProtectedRoute allowedRoles={['CITIZEN', 'OFFICER', 'ADMIN']}>
                   <CitizenDashboard />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/citizen/directions"
+              element={
+                <ProtectedRoute allowedRoles={['CITIZEN', 'ADMIN']}>
+                  <RouteReports />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/citizen/route-reports"
+              element={
+                <ProtectedRoute allowedRoles={['CITIZEN', 'ADMIN']}>
+                  <RouteReports />
                 </ProtectedRoute>
               }
             />

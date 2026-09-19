@@ -48,6 +48,8 @@ interface LeafletMapProps {
   fromLocation?: MapPlacePoint | null;
   destinationLocation?: MapPlacePoint | null;
   fitRouteTrigger?: number;
+  onComplaintSelect?: (complaint: MapComplaint) => void;
+  selectedComplaintId?: string | null;
 }
 
 export const LeafletMap: React.FC<LeafletMapProps> = ({
@@ -67,6 +69,8 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   fromLocation = null,
   destinationLocation = null,
   fitRouteTrigger = 0,
+  onComplaintSelect,
+  selectedComplaintId = null,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -76,6 +80,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   const userLocationLayerRef = useRef<L.LayerGroup | null>(null);
   const routeLayerRef = useRef<L.LayerGroup | null>(null);
   const pickerMarkerRef = useRef<L.Marker | null>(null);
+  const complaintMarkersRef = useRef<Map<string, L.Marker>>(new Map());
 
   // Initialize map
   useEffect(() => {
@@ -176,6 +181,7 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
     if (!mapInstanceRef.current || !markersLayerRef.current) return;
 
     markersLayerRef.current.clearLayers();
+    complaintMarkersRef.current.clear();
 
     // Custom pins for each complaint
     complaints.forEach((c) => {
@@ -252,9 +258,27 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       `;
 
       marker.bindPopup(popupContent);
+
+      marker.on('click', () => {
+        if (onComplaintSelect) {
+          onComplaintSelect(c);
+        }
+      });
+
+      complaintMarkersRef.current.set(c.id, marker);
       markersLayerRef.current!.addLayer(marker);
     });
-  }, [complaints]);
+  }, [complaints, onComplaintSelect]);
+
+  // Handle programmatic selection / panning to a complaint
+  useEffect(() => {
+    if (!selectedComplaintId || !mapInstanceRef.current) return;
+    const marker = complaintMarkersRef.current.get(selectedComplaintId);
+    if (marker) {
+      marker.openPopup();
+      mapInstanceRef.current.panTo(marker.getLatLng(), { animate: true });
+    }
+  }, [selectedComplaintId]);
 
   // Update interactive location picker marker
   useEffect(() => {

@@ -1,17 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
-import { LeafletMap, UserLiveLocation, MapPlacePoint } from '../../components/LeafletMap';
+import { LeafletMap, UserLiveLocation } from '../../components/LeafletMap';
 import { ComplaintCard } from '../../components/ComplaintCard';
 import { useStore } from '../../store/useStore';
 import { api } from '../../lib/api';
 import { DISTRICT_COORDS } from '../../lib/utils';
-import {
-  searchLocation,
-  fetchRoute,
-  LocationSearchResult,
-  RouteResult,
-} from '../../lib/mapService';
 
 export const CitizenDashboard: React.FC = () => {
   const { user, language } = useStore();
@@ -21,21 +15,8 @@ export const CitizenDashboard: React.FC = () => {
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
 
-  // Advanced Civic Portal Map Controls (Civic Portal ONLY)
+  // Map Tile Type View (Streets vs Satellite)
   const [mapType, setMapType] = useState<'streets' | 'satellite'>('streets');
-  const [showDirections, setShowDirections] = useState<boolean>(false);
-  const [fromInput, setFromInput] = useState<string>('');
-  const [toInput, setToInput] = useState<string>('');
-  const [fromCoords, setFromCoords] = useState<MapPlacePoint | null>(null);
-  const [toCoords, setToCoords] = useState<MapPlacePoint | null>(null);
-  const [fromSuggestions, setFromSuggestions] = useState<LocationSearchResult[]>([]);
-  const [toSuggestions, setToSuggestions] = useState<LocationSearchResult[]>([]);
-  const [isSearchingFrom, setIsSearchingFrom] = useState<boolean>(false);
-  const [isSearchingTo, setIsSearchingTo] = useState<boolean>(false);
-  const [activeRoute, setActiveRoute] = useState<RouteResult | null>(null);
-  const [isRouting, setIsRouting] = useState<boolean>(false);
-  const [fitRouteTrigger, setFitRouteTrigger] = useState<number>(0);
-  const [pendingFromCurrentLocation, setPendingFromCurrentLocation] = useState<boolean>(false);
 
   // Real Geolocation States (Strictly client-side, never stored in DB)
   const [userLiveLocation, setUserLiveLocation] = useState<UserLiveLocation | null>(null);
@@ -260,172 +241,6 @@ export const CitizenDashboard: React.FC = () => {
     }
   };
 
-  // Auto-fill From field once Live Location is fetched if requested
-  useEffect(() => {
-    if (pendingFromCurrentLocation && userLiveLocation) {
-      setFromCoords({
-        lat: userLiveLocation.lat,
-        lng: userLiveLocation.lng,
-        name: language === 'en' ? 'My Current Location' : 'எனது தற்போதைய இருப்பிடம்',
-      });
-      setFromInput(language === 'en' ? '📍 My Current Location' : '📍 எனது தற்போதைய இருப்பிடம்');
-      setPendingFromCurrentLocation(false);
-      setFromSuggestions([]);
-    }
-  }, [userLiveLocation, pendingFromCurrentLocation, language]);
-
-  // Debounced Search for "From" location
-  useEffect(() => {
-    if (!fromInput || fromInput.startsWith('📍') || (fromCoords && fromCoords.name === fromInput)) {
-      setFromSuggestions([]);
-      return;
-    }
-    if (fromInput.trim().length < 2) {
-      setFromSuggestions([]);
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      setIsSearchingFrom(true);
-      const results = await searchLocation(fromInput);
-      setFromSuggestions(results);
-      setIsSearchingFrom(false);
-    }, 350);
-
-    return () => clearTimeout(timer);
-  }, [fromInput, fromCoords]);
-
-  // Debounced Search for "To" location
-  useEffect(() => {
-    if (!toInput || (toCoords && toCoords.name === toInput)) {
-      setToSuggestions([]);
-      return;
-    }
-    if (toInput.trim().length < 2) {
-      setToSuggestions([]);
-      return;
-    }
-
-    const timer = setTimeout(async () => {
-      setIsSearchingTo(true);
-      const results = await searchLocation(toInput);
-      setToSuggestions(results);
-      setIsSearchingTo(false);
-    }, 350);
-
-    return () => clearTimeout(timer);
-  }, [toInput, toCoords]);
-
-  // Handle "Use My Location" for From field
-  const handleUseMyLocationForFrom = () => {
-    if (userLiveLocation) {
-      setFromCoords({
-        lat: userLiveLocation.lat,
-        lng: userLiveLocation.lng,
-        name: language === 'en' ? 'My Current Location' : 'எனது தற்போதைய இருப்பிடம்',
-      });
-      setFromInput(language === 'en' ? '📍 My Current Location' : '📍 எனது தற்போதைய இருப்பிடம்');
-      setFromSuggestions([]);
-    } else {
-      setPendingFromCurrentLocation(true);
-      handleGetLiveLocation(false);
-    }
-  };
-
-  // Select suggestion for From
-  const handleSelectFrom = (item: LocationSearchResult) => {
-    setFromCoords({
-      lat: item.lat,
-      lng: item.lng,
-      name: item.name,
-    });
-    setFromInput(item.displayName);
-    setFromSuggestions([]);
-  };
-
-  // Select suggestion for To
-  const handleSelectTo = (item: LocationSearchResult) => {
-    setToCoords({
-      lat: item.lat,
-      lng: item.lng,
-      name: item.name,
-    });
-    setToInput(item.displayName);
-    setToSuggestions([]);
-  };
-
-  // Swap From & To
-  const handleSwapFromTo = () => {
-    const prevFromInput = fromInput;
-    const prevFromCoords = fromCoords;
-    setFromInput(toInput);
-    setFromCoords(toCoords);
-    setToInput(prevFromInput);
-    setToCoords(prevFromCoords);
-    setFromSuggestions([]);
-    setToSuggestions([]);
-
-    if (activeRoute && prevFromCoords && toCoords) {
-      fetchRoute(toCoords.lat, toCoords.lng, prevFromCoords.lat, prevFromCoords.lng).then((res) => {
-        if (res && res.success) {
-          setActiveRoute(res);
-          setFitRouteTrigger((p) => p + 1);
-        }
-      });
-    }
-  };
-
-  // Calculate directions
-  const handleCalculateRoute = async () => {
-    if (!fromCoords || !toCoords) {
-      toast.error(
-        language === 'en'
-          ? 'Please pick or search both starting and destination points.'
-          : 'தொடக்க மற்றும் சேருமிடத்தைத் தேர்ந்தெடுக்கவும்.'
-      );
-      return;
-    }
-
-    setIsRouting(true);
-    const toastId = toast.loading(
-      language === 'en' ? 'Calculating road directions...' : 'வழித்தடத்தை கணக்கிடுகிறது...'
-    );
-
-    const result = await fetchRoute(fromCoords.lat, fromCoords.lng, toCoords.lat, toCoords.lng);
-    setIsRouting(false);
-    toast.dismiss(toastId);
-
-    if (result && result.success && result.coordinates.length > 0) {
-      setActiveRoute(result);
-      setFitRouteTrigger((p) => p + 1);
-      toast.success(
-        language === 'en'
-          ? `Route: ${result.distanceKm} • ${result.durationFormatted}`
-          : `வழித்தடம்: ${result.distanceKm} • ${result.durationFormatted}`
-      );
-    } else {
-      toast.error(
-        language === 'en'
-          ? 'Could not calculate road route between these locations. Try picking a nearby road location.'
-          : 'இந்த இடங்களுக்கு இடையே சாலை வழித்தடத்தை கணக்கிட முடியவில்லை.'
-      );
-    }
-  };
-
-  // Clear directions & markers
-  const handleClearRoute = () => {
-    setActiveRoute(null);
-    setFromCoords(null);
-    setToCoords(null);
-    setFromInput('');
-    setToInput('');
-    setFromSuggestions([]);
-    setToSuggestions([]);
-    toast.success(
-      language === 'en' ? 'Directions cleared' : 'வழித்தடம் அழிக்கப்பட்டது'
-    );
-  };
-
   useEffect(() => {
     fetchComplaints();
   }, []);
@@ -587,12 +402,22 @@ export const CitizenDashboard: React.FC = () => {
                 : '📍 My Live Location'}
             </span>
           </button>
+
+          {/* Link to Dedicated "Directions & Reports" Page */}
+          <Link
+            to="/citizen/directions"
+            className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 shadow-2xs"
+            title="Open Dedicated Directions & Route Reports Discovery"
+          >
+            <span className="material-symbols-outlined text-[16px]">alt_route</span>
+            <span>{language === 'en' ? 'Directions & Reports' : 'வழித்தடம் & புகார்கள்'}</span>
+          </Link>
         </div>
       </div>
 
       {/* Main Map Canvas & Overlay Drawer */}
       <div className="relative flex-1 w-full h-full">
-        {/* Full-screen Leaflet Map with Live Location and Advanced Satellite/Route Support */}
+        {/* Clean Main Civic Map with Live Location & Satellite Support */}
         <LeafletMap
           complaints={filteredComplaints}
           center={mapCenter}
@@ -603,10 +428,6 @@ export const CitizenDashboard: React.FC = () => {
           flyToUserLocationTrigger={flyTrigger}
           onUserPanned={() => setUserHasManuallyPanned(true)}
           mapType={mapType}
-          routeGeometry={activeRoute?.coordinates}
-          fromLocation={fromCoords}
-          destinationLocation={toCoords}
-          fitRouteTrigger={fitRouteTrigger}
         />
 
         {/* Floating "📍 My Live Location" Hub Card */}
@@ -754,327 +575,32 @@ export const CitizenDashboard: React.FC = () => {
           </div>
         )}
 
-        {/* Google Maps-Style Top-Left Controls: Satellite Switcher & Directions Hub */}
-        <div className="absolute top-4 left-4 z-20 flex flex-col gap-2 max-w-[calc(100vw-2rem)] sm:max-w-md">
-          {/* Segmented Map Type & Directions Pill */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Map / Satellite Segmented Switcher */}
-            <div className="bg-white/95 backdrop-blur-md p-1 rounded-2xl shadow-lg border border-surface-container flex items-center gap-1">
-              <button
-                type="button"
-                onClick={() => setMapType('streets')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                  mapType === 'streets'
-                    ? 'bg-primary text-white shadow-xs'
-                    : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[16px]">map</span>
-                <span>{language === 'en' ? 'Map' : 'வரைபடம்'}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setMapType('satellite')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                  mapType === 'satellite'
-                    ? 'bg-primary text-white shadow-xs'
-                    : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[16px]">satellite_alt</span>
-                <span>{language === 'en' ? 'Satellite' : 'செயற்கைக்கோள்'}</span>
-              </button>
-            </div>
-
-            {/* Directions Toggle Button */}
-            <button
-              type="button"
-              onClick={() => setShowDirections(!showDirections)}
-              className={`px-3.5 py-2 rounded-2xl text-xs font-bold transition-all flex items-center gap-1.5 shadow-lg border ${
-                showDirections || activeRoute
-                  ? 'bg-blue-600 text-white border-blue-700 shadow-blue-500/20'
-                  : 'bg-white/95 backdrop-blur-md text-on-surface hover:bg-blue-50 border-surface-container'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[18px]">directions</span>
-              <span>{language === 'en' ? 'Directions' : 'வழித்தடம்'}</span>
-              {activeRoute && (
-                <span className="bg-white/20 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
-                  {activeRoute.distanceKm}
-                </span>
-              )}
-            </button>
-          </div>
-
-          {/* Google Maps-Style Floating Directions & Route Planning Hub */}
-          {showDirections && (
-            <div className="bg-white/95 backdrop-blur-md rounded-2xl p-3.5 shadow-2xl border border-surface-container w-full sm:w-96 text-xs space-y-3 animate-in fade-in slide-in-from-top-2">
-              <div className="flex items-center justify-between border-b border-surface-container pb-2">
-                <div className="flex items-center gap-1.5 font-bold text-on-surface text-sm">
-                  <span className="material-symbols-outlined text-blue-600 text-[20px]">
-                    alt_route
-                  </span>
-                  <span>{language === 'en' ? 'From → To Route Search' : 'வழித்தடத் தேடல்'}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setShowDirections(false)}
-                  className="p-1 text-on-surface-variant hover:text-on-surface rounded-lg"
-                >
-                  <span className="material-symbols-outlined text-[18px]">close</span>
-                </button>
-              </div>
-
-              {/* Inputs Container */}
-              <div className="relative space-y-2">
-                {/* Swap button placed absolutely between From and To */}
-                <button
-                  type="button"
-                  onClick={handleSwapFromTo}
-                  title="Swap starting point and destination"
-                  className="absolute right-2 top-8 z-10 p-1.5 bg-white border border-surface-container-high rounded-full shadow-md text-on-surface-variant hover:text-primary hover:bg-blue-50 transition-colors"
-                >
-                  <span className="material-symbols-outlined text-[16px] block">swap_vert</span>
-                </button>
-
-                {/* From Input */}
-                <div className="relative">
-                  <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center justify-between mb-1">
-                    <span className="flex items-center gap-1">
-                      <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>
-                      {language === 'en' ? 'From (Starting Point)' : 'புறப்படும் இடம்'}
-                    </span>
-                    {fromCoords && (
-                      <span className="text-[10px] text-emerald-600 font-semibold lowercase">
-                        {fromCoords.lat.toFixed(3)}, {fromCoords.lng.toFixed(3)}
-                      </span>
-                    )}
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={fromInput}
-                      onChange={(e) => {
-                        setFromInput(e.target.value);
-                        if (fromCoords && fromCoords.name !== e.target.value) {
-                          setFromCoords(null);
-                        }
-                      }}
-                      placeholder={
-                        language === 'en'
-                          ? 'Search starting place or use location...'
-                          : 'புறப்படும் இடத்தை தேடவும்...'
-                      }
-                      className="w-full pr-10 pl-3 py-2 text-xs rounded-xl border border-surface-container-high bg-surface-container-lowest text-on-surface outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-                    />
-                    {isSearchingFrom && (
-                      <span className="material-symbols-outlined absolute right-8 top-1/2 -translate-y-1/2 text-primary animate-spin text-[16px]">
-                        progress_activity
-                      </span>
-                    )}
-                    {fromInput && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFromInput('');
-                          setFromCoords(null);
-                          setFromSuggestions([]);
-                        }}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">close</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Quick "My Current Location" Option */}
-                  <div className="mt-1 flex items-center justify-between">
-                    <button
-                      type="button"
-                      onClick={handleUseMyLocationForFrom}
-                      className="text-[11px] font-bold text-primary hover:text-primary-dark flex items-center gap-1 py-0.5 px-1.5 rounded-lg hover:bg-blue-50 transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">my_location</span>
-                      <span>
-                        {language === 'en' ? '📍 My Current Location' : '📍 எனது தற்போதைய இருப்பிடம்'}
-                      </span>
-                    </button>
-                  </div>
-
-                  {/* From Suggestions Dropdown */}
-                  {fromSuggestions.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-surface-container z-30 max-h-48 overflow-y-auto divide-y divide-surface-container-low">
-                      {fromSuggestions.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => handleSelectFrom(item)}
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors flex items-start gap-2"
-                        >
-                          <span className="material-symbols-outlined text-emerald-600 text-[16px] shrink-0 mt-0.5">
-                            pin_drop
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-semibold text-on-surface truncate">{item.name}</p>
-                            <p className="text-[10px] text-on-surface-variant truncate">
-                              {item.displayName}
-                            </p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* To Input */}
-                <div className="relative">
-                  <label className="text-[10px] font-bold text-on-surface-variant uppercase tracking-wider flex items-center justify-between mb-1">
-                    <span className="flex items-center gap-1">
-                      <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block"></span>
-                      {language === 'en' ? 'To (Destination)' : 'சேருமிடம்'}
-                    </span>
-                    {toCoords && (
-                      <span className="text-[10px] text-red-600 font-semibold lowercase">
-                        {toCoords.lat.toFixed(3)}, {toCoords.lng.toFixed(3)}
-                      </span>
-                    )}
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      value={toInput}
-                      onChange={(e) => {
-                        setToInput(e.target.value);
-                        if (toCoords && toCoords.name !== e.target.value) {
-                          setToCoords(null);
-                        }
-                      }}
-                      placeholder={
-                        language === 'en'
-                          ? 'Search destination place or landmark...'
-                          : 'சேருமிடத்தை தேடவும்...'
-                      }
-                      className="w-full pr-8 pl-3 py-2 text-xs rounded-xl border border-surface-container-high bg-surface-container-lowest text-on-surface outline-none focus:border-blue-600 focus:ring-1 focus:ring-blue-600"
-                    />
-                    {isSearchingTo && (
-                      <span className="material-symbols-outlined absolute right-8 top-1/2 -translate-y-1/2 text-primary animate-spin text-[16px]">
-                        progress_activity
-                      </span>
-                    )}
-                    {toInput && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setToInput('');
-                          setToCoords(null);
-                          setToSuggestions([]);
-                        }}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-on-surface-variant hover:text-on-surface"
-                      >
-                        <span className="material-symbols-outlined text-[16px]">close</span>
-                      </button>
-                    )}
-                  </div>
-
-                  {/* To Suggestions Dropdown */}
-                  {toSuggestions.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-surface-container z-30 max-h-48 overflow-y-auto divide-y divide-surface-container-low">
-                      {toSuggestions.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => handleSelectTo(item)}
-                          className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors flex items-start gap-2"
-                        >
-                          <span className="material-symbols-outlined text-red-600 text-[16px] shrink-0 mt-0.5">
-                            flag
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="font-semibold text-on-surface truncate">{item.name}</p>
-                            <p className="text-[10px] text-on-surface-variant truncate">
-                              {item.displayName}
-                            </p>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Action Buttons: Get Directions & Clear */}
-              <div className="flex items-center gap-2 pt-1">
-                <button
-                  type="button"
-                  onClick={handleCalculateRoute}
-                  disabled={isRouting || !fromCoords || !toCoords}
-                  className={`flex-1 py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition-all ${
-                    !fromCoords || !toCoords
-                      ? 'bg-surface-container text-on-surface-variant cursor-not-allowed'
-                      : isRouting
-                      ? 'bg-blue-700 text-white shadow-md'
-                      : 'bg-blue-600 hover:bg-blue-700 text-white shadow-md shadow-blue-500/25 active:scale-[0.98]'
-                  }`}
-                >
-                  {isRouting ? (
-                    <>
-                      <span className="material-symbols-outlined text-[16px] animate-spin">
-                        progress_activity
-                      </span>
-                      <span>
-                        {language === 'en' ? 'Calculating...' : 'கணக்கிடுகிறது...'}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="material-symbols-outlined text-[16px]">navigation</span>
-                      <span>{language === 'en' ? 'Get Directions' : 'வழித்தடம் காண்க'}</span>
-                    </>
-                  )}
-                </button>
-
-                {(activeRoute || fromCoords || toCoords || fromInput || toInput) && (
-                  <button
-                    type="button"
-                    onClick={handleClearRoute}
-                    className="py-2 px-3 rounded-xl bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-bold text-xs transition-colors"
-                    title="Clear route and destination"
-                  >
-                    {language === 'en' ? 'Clear' : 'அழி'}
-                  </button>
-                )}
-              </div>
-
-              {/* Real Route Summary Card (Visible when route is calculated) */}
-              {activeRoute && (
-                <div className="bg-blue-50/90 border border-blue-200 rounded-xl p-2.5 text-xs space-y-1.5">
-                  <div className="flex items-center justify-between font-bold text-blue-950">
-                    <span className="flex items-center gap-1">
-                      <span className="material-symbols-outlined text-[18px] text-blue-700">
-                        directions_car
-                      </span>
-                      <span>{language === 'en' ? 'Driving Route' : 'சாலை வழித்தடம்'}</span>
-                    </span>
-                    <span className="bg-blue-600 text-white text-[11px] px-2 py-0.5 rounded-full font-bold">
-                      {activeRoute.distanceKm}
-                    </span>
-                  </div>
-
-                  <div className="flex items-center justify-between text-[11px] text-blue-900 font-medium pt-0.5">
-                    <span>
-                      {language === 'en' ? 'Est. Travel Time:' : 'மதிப்பிடப்பட்ட நேரம்:'}{' '}
-                      <strong className="text-blue-950 font-bold">{activeRoute.durationFormatted}</strong>
-                    </span>
-                    {activeRoute.summary && (
-                      <span className="text-[10px] text-blue-700 truncate max-w-[140px]">
-                        {activeRoute.summary}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
+        {/* Floating Map / Satellite Segmented Switcher */}
+        <div className="absolute top-4 left-4 z-20 bg-white/95 backdrop-blur-md p-1 rounded-2xl shadow-lg border border-surface-container flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setMapType('streets')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              mapType === 'streets'
+                ? 'bg-primary text-white shadow-xs'
+                : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[16px]">map</span>
+            <span>{language === 'en' ? 'Map' : 'வரைபடம்'}</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMapType('satellite')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              mapType === 'satellite'
+                ? 'bg-primary text-white shadow-xs'
+                : 'text-on-surface-variant hover:text-on-surface hover:bg-surface-container'
+            }`}
+          >
+            <span className="material-symbols-outlined text-[16px]">satellite_alt</span>
+            <span>{language === 'en' ? 'Satellite' : 'செயற்கைக்கோள்'}</span>
+          </button>
         </div>
 
         {/* Map Legend Floating Pill (Positioned neatly at bottom left) */}

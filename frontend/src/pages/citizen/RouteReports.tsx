@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { LeafletMap, UserLiveLocation, MapPlacePoint } from '../../components/LeafletMap';
+import { MapErrorBoundary } from '../../components/ui/MapErrorBoundary';
 import { useStore } from '../../store/useStore';
 import { api } from '../../lib/api';
 import { DISTRICT_COORDS, STATUS_INFO, CATEGORY_INFO } from '../../lib/utils';
@@ -11,7 +12,7 @@ import {
   filterReportsAlongRoute,
   LocationSearchResult,
   RouteResult,
-  RouteComplaintMatch,
+  isValidLatLng,
 } from '../../lib/mapService';
 
 export const RouteReports: React.FC = () => {
@@ -45,8 +46,9 @@ export const RouteReports: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedComplaintId, setSelectedComplaintId] = useState<string | null>(null);
 
-  // Mobile View Switcher (Map vs Reports Panel)
-  const [mobileView, setMobileView] = useState<'map' | 'panel'>('panel');
+  // Mobile Bottom Sheet & Drawer States
+  const [mobileDrawerOpen, setMobileDrawerOpen] = useState<boolean>(false);
+  const [mobileInputCollapsed, setMobileInputCollapsed] = useState<boolean>(false);
 
   // Real Geolocation States
   const [userLiveLocation, setUserLiveLocation] = useState<UserLiveLocation | null>(null);
@@ -91,7 +93,7 @@ export const RouteReports: React.FC = () => {
     }
   };
 
-  // Real Geolocation Fetcher
+  // Real Geolocation Fetcher with 2-Stage GPS -> Network Fallback
   const handleGetLiveLocation = (enableContinuousTracking: boolean = false) => {
     setLocationError(null);
 
@@ -123,65 +125,83 @@ export const RouteReports: React.FC = () => {
     setIsLocating(true);
     const loadingToast = toast.loading(
       language === 'en'
-        ? 'Requesting device location...'
+        ? 'Acquiring device location...'
         : 'சாதன இருப்பிடத்தை கோருகிறது...',
       { id: 'geo-status' }
     );
 
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setIsLocating(false);
-        toast.dismiss(loadingToast);
+    const onLocationSuccess = (pos: GeolocationPosition) => {
+      setIsLocating(false);
+      toast.dismiss(loadingToast);
 
-        const lat = Number(pos.coords.latitude.toFixed(6));
-        const lng = Number(pos.coords.longitude.toFixed(6));
-        const accuracy = pos.coords.accuracy;
+      const lat = Number(pos.coords.latitude.toFixed(6));
+      const lng = Number(pos.coords.longitude.toFixed(6));
+      const accuracy = pos.coords.accuracy;
 
-        setUserLiveLocation({
-          lat,
-          lng,
-          accuracy,
-          heading: pos.coords.heading,
-          speed: pos.coords.speed,
-          timestamp: pos.timestamp,
-        });
-
-        setUserHasManuallyPanned(false);
-        setFlyTrigger((prev) => prev + 1);
-
-        toast.success(
-          language === 'en' ? 'Live Location acquired!' : 'நேரடி இருப்பிடம் பெறப்பட்டது!',
+      if (!isValidLatLng(lat, lng)) {
+        toast.error(
+          language === 'en' ? 'Received invalid coordinates.' : 'தவறான ஆயத்தொலைவுகள்.',
           { id: 'geo-status' }
         );
+        return;
+      }
 
-        if (enableContinuousTracking) {
-          startLiveTrackingWatcher();
-        }
-      },
+      setUserLiveLocation({
+        lat,
+        lng,
+        accuracy,
+        heading: pos.coords.heading,
+        speed: pos.coords.speed,
+        timestamp: pos.timestamp,
+      });
+
+      setUserHasManuallyPanned(false);
+      setFlyTrigger((prev) => prev + 1);
+
+      toast.success(
+        language === 'en' ? 'Live Location acquired!' : 'நேரடி இருப்பிடம் பெறப்பட்டது!',
+        { id: 'geo-status' }
+      );
+
+      if (enableContinuousTracking) {
+        startLiveTrackingWatcher();
+      }
+    };
+
+    // Stage 1: Try GPS high accuracy first (8s timeout)
+    navigator.geolocation.getCurrentPosition(
+      onLocationSuccess,
       (err) => {
-        setIsLocating(false);
-        toast.dismiss(loadingToast);
-        let msg =
-          language === 'en'
-            ? 'Unable to retrieve your current location.'
-            : 'தற்போதைய இருப்பிடத்தைப் பெற முடியவில்லை.';
-        let type: 'DENIED' | 'UNAVAILABLE' | 'TIMEOUT' = 'UNAVAILABLE';
-
         if (err.code === err.PERMISSION_DENIED) {
-          type = 'DENIED';
-          msg =
+          setIsLocating(false);
+          toast.dismiss(loadingToast);
+          const msg =
             language === 'en'
               ? 'Location permission denied. Please allow location access in browser settings.'
               : 'இருப்பிட அனுமதி மறுக்கப்பட்டது.';
-        } else if (err.code === err.TIMEOUT) {
-          type = 'TIMEOUT';
-          msg = language === 'en' ? 'Location request timed out.' : 'இருப்பிட கோரிக்கை நேரம் முடிந்தது.';
+          setLocationError({ type: 'DENIED', message: msg });
+          toast.error(msg);
+          return;
         }
 
-        setLocationError({ type, message: msg });
-        toast.error(msg);
+        // Stage 2: Fallback to network/cell tower
+        console.warn('GPS high accuracy timed out, falling back to network geolocation...');
+        navigator.geolocation.getCurrentPosition(
+          onLocationSuccess,
+          (fallbackErr) => {
+            setIsLocating(false);
+            toast.dismiss(loadingToast);
+            let msg = language === 'en' ? 'Unable to retrieve location.' : 'இருப்பிடத்தைப் பெற முடியவில்லை.';
+            if (fallbackErr.code === fallbackErr.TIMEOUT) {
+              msg = language === 'en' ? 'Location request timed out.' : 'இருப்பிட கோரிக்கை நேரம் முடிந்தது.';
+            }
+            setLocationError({ type: 'TIMEOUT', message: msg });
+            toast.error(msg, { id: 'geo-status' });
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
     );
   };
 
@@ -197,6 +217,8 @@ export const RouteReports: React.FC = () => {
       (pos) => {
         const lat = Number(pos.coords.latitude.toFixed(6));
         const lng = Number(pos.coords.longitude.toFixed(6));
+        if (!isValidLatLng(lat, lng)) return;
+
         setUserLiveLocation({
           lat,
           lng,
@@ -330,13 +352,73 @@ export const RouteReports: React.FC = () => {
     }
   };
 
-  // Calculate Real Road Route
+  // Calculate Real Road Route with Auto-Geocoding Resolution & Dual Provider Fallback
   const handleGetRoute = async () => {
-    if (!fromCoords || !toCoords) {
+    let currentFrom = fromCoords;
+    let currentTo = toCoords;
+
+    // Auto-resolve From coordinates if user typed text without clicking suggestion
+    if (!currentFrom && fromInput.trim()) {
+      if (fromInput.startsWith('📍') && userLiveLocation) {
+        currentFrom = {
+          lat: userLiveLocation.lat,
+          lng: userLiveLocation.lng,
+          name: language === 'en' ? 'My Current Location' : 'எனது தற்போதைய இருப்பிடம்',
+        };
+        setFromCoords(currentFrom);
+      } else {
+        const resolvingToast = toast.loading(
+          language === 'en'
+            ? `Searching for "${fromInput.trim()}"...`
+            : `"${fromInput.trim()}" தேடுகிறது...`
+        );
+        const results = await searchLocation(fromInput.trim());
+        toast.dismiss(resolvingToast);
+        if (results && results.length > 0) {
+          currentFrom = { lat: results[0].lat, lng: results[0].lng, name: results[0].name };
+          setFromCoords(currentFrom);
+        }
+      }
+    }
+
+    // Auto-resolve To coordinates if user typed text without clicking suggestion
+    if (!currentTo && toInput.trim()) {
+      const resolvingToast = toast.loading(
+        language === 'en'
+          ? `Searching for "${toInput.trim()}"...`
+          : `"${toInput.trim()}" தேடுகிறது...`
+      );
+      const results = await searchLocation(toInput.trim());
+      toast.dismiss(resolvingToast);
+      if (results && results.length > 0) {
+        currentTo = { lat: results[0].lat, lng: results[0].lng, name: results[0].name };
+        setToCoords(currentTo);
+      }
+    }
+
+    if (!currentFrom) {
       toast.error(
         language === 'en'
-          ? 'Please pick both starting point and destination.'
-          : 'தொடக்க மற்றும் சேருமிடத்தைத் தேர்ந்தெடுக்கவும்.'
+          ? 'Please enter or pick a valid starting point.'
+          : 'செல்லுபடியாகும் தொடக்க இடத்தைத் தேர்ந்தெடுக்கவும்.'
+      );
+      return;
+    }
+
+    if (!currentTo) {
+      toast.error(
+        language === 'en'
+          ? 'Please enter or pick a valid destination.'
+          : 'செல்லுபடியாகும் சேருமிடத்தைத் தேர்ந்தெடுக்கவும்.'
+      );
+      return;
+    }
+
+    if (!isValidLatLng(currentFrom.lat, currentFrom.lng) || !isValidLatLng(currentTo.lat, currentTo.lng)) {
+      toast.error(
+        language === 'en'
+          ? 'Invalid location coordinates detected.'
+          : 'தவறான இருப்பிட ஆயத்தொலைவுகள்.'
       );
       return;
     }
@@ -346,16 +428,16 @@ export const RouteReports: React.FC = () => {
       language === 'en' ? 'Calculating road directions...' : 'வழித்தடத்தை கணக்கிடுகிறது...'
     );
 
-    const result = await fetchRoute(fromCoords.lat, fromCoords.lng, toCoords.lat, toCoords.lng);
+    const result = await fetchRoute(currentFrom.lat, currentFrom.lng, currentTo.lat, currentTo.lng);
     setIsRouting(false);
     toast.dismiss(toastId);
 
     if (result && result.success && result.coordinates.length > 0) {
       setActiveRoute(result);
       setFitRouteTrigger((p) => p + 1);
-      // Auto-switch to map on mobile so user sees the route
+      // Auto-collapse mobile input to reveal map view
       if (window.innerWidth < 768) {
-        setMobileView('map');
+        setMobileInputCollapsed(true);
       }
       toast.success(
         language === 'en'
@@ -363,10 +445,11 @@ export const RouteReports: React.FC = () => {
           : `வழித்தடம்: ${result.distanceKm} • ${result.durationFormatted}`
       );
     } else {
+      const reason = result?.errorMessage ? ` (${result.errorMessage})` : '';
       toast.error(
         language === 'en'
-          ? 'Could not calculate a road route between these points. Try nearby road addresses.'
-          : 'இந்த இடங்களுக்கு இடையே சாலை வழித்தடத்தை கணக்கிட முடியவில்லை.'
+          ? `Could not calculate road route${reason}. Please check origin and destination.`
+          : `இந்த இடங்களுக்கு இடையே சாலை வழித்தடத்தை கணக்கிட முடியவில்லை.`
       );
     }
   };
@@ -381,6 +464,8 @@ export const RouteReports: React.FC = () => {
     setFromSuggestions([]);
     setToSuggestions([]);
     setSelectedComplaintId(null);
+    setMobileDrawerOpen(false);
+    setMobileInputCollapsed(false);
     toast.success(language === 'en' ? 'Route cleared' : 'வழித்தடம் அழிக்கப்பட்டது');
   };
 
@@ -428,19 +513,19 @@ export const RouteReports: React.FC = () => {
   };
   const mapCenter: [number, number] = [defaultCenterInfo.lat, defaultCenterInfo.lng];
 
-  // Scroll to selected report card when selected
+  // Select complaint and focus
   const handleSelectComplaintFromList = (complaintId: string) => {
     setSelectedComplaintId(complaintId);
     if (window.innerWidth < 768) {
-      setMobileView('map');
+      setMobileDrawerOpen(false);
     }
   };
 
   return (
     <div className="relative h-[calc(100vh-4rem)] flex flex-col overflow-hidden bg-surface">
-      {/* Top Breadcrumb & Mobile View Switcher Bar */}
-      <div className="bg-white border-b border-surface-container-high px-4 py-2.5 z-20 flex flex-wrap items-center justify-between gap-2 shadow-2xs">
-        <div className="flex items-center gap-3">
+      {/* Top Breadcrumb Header Bar */}
+      <div className="bg-white border-b border-surface-container-high px-4 py-2 z-20 flex items-center justify-between gap-2 shadow-2xs shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3">
           <Link
             to="/citizen/dashboard"
             className="p-1.5 rounded-xl hover:bg-surface-container text-on-surface-variant hover:text-primary transition-colors flex items-center gap-1 text-xs font-semibold"
@@ -448,92 +533,51 @@ export const RouteReports: React.FC = () => {
           >
             <span className="material-symbols-outlined text-[18px]">arrow_back</span>
             <span className="hidden sm:inline">
-              {language === 'en' ? 'Main Civic Map' : 'முதன்மை வரைபடம்'}
+              {language === 'en' ? 'Back to Map' : 'வரைபடத்திற்கு திரும்பு'}
             </span>
           </Link>
-
-          <div className="h-4 w-px bg-surface-container-high hidden sm:block" />
-
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-blue-100 text-blue-800 flex items-center justify-center">
-              <span className="material-symbols-outlined text-[18px]">alt_route</span>
-            </div>
-            <div>
-              <h1 className="font-bold text-xs sm:text-sm text-on-surface leading-tight">
-                {language === 'en'
-                  ? 'Directions & Route Report Discovery'
-                  : 'பயண வழித்தடமும் மக்கள் புகார்களும்'}
-              </h1>
-              <p className="text-[10px] text-on-surface-variant hidden md:block">
-                {language === 'en'
-                  ? 'Discover road hazards, sanitation issues & civic complaints along your travel path'
-                  : 'உங்கள் பயண பாதையில் உள்ள சாலை சேதங்கள் மற்றும் புகார்களை கண்டறியவும்'}
-              </p>
-            </div>
+          <div className="h-4 w-[1px] bg-surface-container-high" />
+          <div className="flex items-center gap-1.5">
+            <span className="material-symbols-outlined text-primary text-[20px]">alt_route</span>
+            <h1 className="font-bold text-xs sm:text-sm text-on-surface truncate">
+              {language === 'en' ? 'Directions & Corridor Reports' : 'வழித்தடம் & வழியிலுள்ள புகார்கள்'}
+            </h1>
           </div>
         </div>
 
-        {/* Mobile View Toggle Switcher (Map vs Panel) */}
-        <div className="flex md:hidden items-center gap-1 bg-surface-container-low p-1 rounded-xl">
-          <button
-            type="button"
-            onClick={() => setMobileView('panel')}
-            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-              mobileView === 'panel'
-                ? 'bg-primary text-white shadow-xs'
-                : 'text-on-surface-variant'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[15px]">tune</span>
-            <span>{language === 'en' ? 'Route & List' : 'பாதை'}</span>
-            {activeRoute && (
-              <span className="ml-1 bg-white/20 text-[10px] px-1.5 py-0.2 rounded-full font-bold">
-                {filteredRouteMatches.length}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={() => setMobileView('map')}
-            className={`px-3 py-1 rounded-lg text-xs font-bold transition-all flex items-center gap-1 ${
-              mobileView === 'map'
-                ? 'bg-primary text-white shadow-xs'
-                : 'text-on-surface-variant'
-            }`}
-          >
-            <span className="material-symbols-outlined text-[15px]">map</span>
-            <span>{language === 'en' ? 'Map' : 'வரைபடம்'}</span>
-          </button>
-        </div>
+        {activeRoute && (
+          <div className="flex items-center gap-2">
+            <div className="hidden sm:flex items-center gap-2 px-2.5 py-1 bg-blue-50 text-blue-900 border border-blue-200 rounded-full text-xs font-bold">
+              <span>{activeRoute.distanceKm}</span>
+              <span>•</span>
+              <span>{activeRoute.durationFormatted}</span>
+              <span>•</span>
+              <span>{filteredRouteMatches.length} Issues</span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleClearRoute}
+              className="text-xs font-bold text-red-600 hover:text-red-700 hover:bg-red-50 px-2.5 py-1 rounded-xl transition-colors flex items-center gap-1 border border-red-200"
+            >
+              <span className="material-symbols-outlined text-[14px]">close</span>
+              <span>{language === 'en' ? 'Clear Route' : 'வழித்தடம் நீக்கு'}</span>
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Main Content Area: Side Panel + Full Map */}
-      <div className="relative flex-1 flex w-full h-full overflow-hidden">
-        {/* Left Side Panel: Route Controls, Corridor Filter & Report List */}
-        <div
-          className={`w-full md:w-[420px] lg:w-[440px] h-full bg-white border-r border-surface-container-high flex flex-col z-10 shrink-0 shadow-lg transition-all duration-200 ${
-            mobileView === 'map' ? 'hidden md:flex' : 'flex'
-          }`}
-        >
-          {/* Top Sticky Route Inputs Card */}
+      {/* Main Container: Desktop Side Panel + Full Interactive Map */}
+      <div className="relative flex-1 flex w-full h-full min-h-0 overflow-hidden">
+        {/* Left Side Panel (Desktop only: 420px-440px wide) */}
+        <div className="hidden md:flex w-[420px] lg:w-[440px] h-full bg-white border-r border-surface-container-high flex-col z-10 shrink-0 shadow-lg">
+          {/* Top Route Inputs Card */}
           <div className="p-4 border-b border-surface-container space-y-3 bg-surface-container-lowest shrink-0">
             <div className="flex items-center justify-between">
               <span className="text-xs font-bold text-on-surface flex items-center gap-1.5">
-                <span className="material-symbols-outlined text-primary text-[18px]">
-                  route
-                </span>
+                <span className="material-symbols-outlined text-primary text-[18px]">route</span>
                 <span>{language === 'en' ? 'Plan Your Travel Route' : 'பயண பாதையை திட்டமிடுங்கள்'}</span>
               </span>
-              {activeRoute && (
-                <button
-                  type="button"
-                  onClick={handleClearRoute}
-                  className="text-xs font-bold text-red-600 hover:text-red-700 hover:bg-red-50 px-2 py-0.5 rounded-lg transition-colors flex items-center gap-1"
-                >
-                  <span className="material-symbols-outlined text-[14px]">close</span>
-                  <span>{language === 'en' ? 'Clear Route' : 'வழித்தடம் நீக்கு'}</span>
-                </button>
-              )}
             </div>
 
             {/* Inputs Container */}
@@ -573,7 +617,7 @@ export const RouteReports: React.FC = () => {
                     }}
                     placeholder={
                       language === 'en'
-                        ? 'Search start address or use My Location...'
+                        ? 'Search start address or type city...'
                         : 'புறப்படும் இடத்தை தேடவும்...'
                     }
                     className="w-full pr-10 pl-3 py-2 text-xs rounded-xl border border-surface-container bg-white text-on-surface outline-none focus:border-primary focus:ring-1 focus:ring-primary"
@@ -619,6 +663,14 @@ export const RouteReports: React.FC = () => {
                       <button
                         key={item.id}
                         type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSelectFrom(item);
+                        }}
+                        onTouchStart={(e) => {
+                          e.preventDefault();
+                          handleSelectFrom(item);
+                        }}
                         onClick={() => handleSelectFrom(item)}
                         className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors flex items-start gap-2"
                       >
@@ -662,7 +714,7 @@ export const RouteReports: React.FC = () => {
                     }}
                     placeholder={
                       language === 'en'
-                        ? 'Search destination landmark or street...'
+                        ? 'Search destination landmark or city...'
                         : 'சேருமிடத்தை தேடவும்...'
                     }
                     className="w-full pr-8 pl-3 py-2 text-xs rounded-xl border border-surface-container bg-white text-on-surface outline-none focus:border-primary focus:ring-1 focus:ring-primary"
@@ -694,6 +746,14 @@ export const RouteReports: React.FC = () => {
                       <button
                         key={item.id}
                         type="button"
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          handleSelectTo(item);
+                        }}
+                        onTouchStart={(e) => {
+                          e.preventDefault();
+                          handleSelectTo(item);
+                        }}
                         onClick={() => handleSelectTo(item)}
                         className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors flex items-start gap-2"
                       >
@@ -717,9 +777,9 @@ export const RouteReports: React.FC = () => {
             <button
               type="button"
               onClick={handleGetRoute}
-              disabled={isRouting || !fromCoords || !toCoords}
+              disabled={isRouting || (!fromCoords && !fromInput) || (!toCoords && !toInput)}
               className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all ${
-                !fromCoords || !toCoords
+                (!fromCoords && !fromInput) || (!toCoords && !toInput)
                   ? 'bg-surface-container text-on-surface-variant cursor-not-allowed opacity-75'
                   : isRouting
                   ? 'bg-primary-dark text-white shadow-md'
@@ -736,7 +796,7 @@ export const RouteReports: React.FC = () => {
               ) : (
                 <>
                   <span className="material-symbols-outlined text-[18px]">navigation</span>
-                  <span>{language === 'en' ? 'Get Route' : 'வழித்தடம் காண்க'}</span>
+                  <span>{language === 'en' ? 'Get Directions & Route Reports' : 'வழித்தடம் & புகார்கள் காண்க'}</span>
                 </>
               )}
             </button>
@@ -778,7 +838,7 @@ export const RouteReports: React.FC = () => {
                     <span className="material-symbols-outlined text-[15px] text-primary">
                       straighten
                     </span>
-                    <span>{language === 'en' ? 'Route Corridor Radius:' : 'பாதை தாழ்வார தூரம்:'}</span>
+                    <span>{language === 'en' ? 'Corridor Distance:' : 'தாழ்வார தூரம்:'}</span>
                   </span>
                   <span className="font-bold text-primary text-xs">
                     {corridorMeters >= 1000 ? `${corridorMeters / 1000} km` : `${corridorMeters} m`}
@@ -844,7 +904,7 @@ export const RouteReports: React.FC = () => {
             </div>
           )}
 
-          {/* Dynamic Report List / Empty Guide */}
+          {/* Dynamic Report List */}
           <div
             ref={reportListRef}
             className="flex-1 overflow-y-auto p-4 space-y-3 bg-surface min-h-0"
@@ -969,29 +1029,27 @@ export const RouteReports: React.FC = () => {
           </div>
         </div>
 
-        {/* Right Map Canvas (Interactive Route & Corridor Display) */}
-        <div
-          className={`flex-1 relative w-full h-full ${
-            mobileView === 'panel' ? 'hidden md:block' : 'block'
-          }`}
-        >
-          <LeafletMap
-            complaints={mapDisplayComplaints}
-            center={mapCenter}
-            zoom={12}
-            height="100%"
-            className="rounded-none border-0"
-            userLocation={userLiveLocation}
-            flyToUserLocationTrigger={flyTrigger}
-            onUserPanned={() => setUserHasManuallyPanned(true)}
-            mapType={mapType}
-            routeGeometry={activeRoute?.coordinates}
-            fromLocation={fromCoords}
-            destinationLocation={toCoords}
-            fitRouteTrigger={fitRouteTrigger}
-            selectedComplaintId={selectedComplaintId}
-            onComplaintSelect={(c) => setSelectedComplaintId(c.id)}
-          />
+        {/* Right Map Canvas (Always mounted and visible on both Desktop & Mobile) */}
+        <div className="flex-1 relative w-full h-full min-h-0">
+          <MapErrorBoundary>
+            <LeafletMap
+              complaints={mapDisplayComplaints}
+              center={mapCenter}
+              zoom={12}
+              height="100%"
+              className="rounded-none border-0"
+              userLocation={userLiveLocation}
+              flyToUserLocationTrigger={flyTrigger}
+              onUserPanned={() => setUserHasManuallyPanned(true)}
+              mapType={mapType}
+              routeGeometry={activeRoute?.coordinates}
+              fromLocation={fromCoords}
+              destinationLocation={toCoords}
+              fitRouteTrigger={fitRouteTrigger}
+              selectedComplaintId={selectedComplaintId}
+              onComplaintSelect={(c) => setSelectedComplaintId(c.id)}
+            />
+          </MapErrorBoundary>
 
           {/* Floating Map/Satellite Segmented Switcher (Top Left) */}
           <div className="absolute top-4 left-4 z-20 bg-white/95 backdrop-blur-md p-1 rounded-2xl shadow-lg border border-surface-container flex items-center gap-1">
@@ -1021,8 +1079,8 @@ export const RouteReports: React.FC = () => {
             </button>
           </div>
 
-          {/* Floating "📍 My Live Location" Action Hub (Top Right) */}
-          <div className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2 max-w-[280px] sm:max-w-xs">
+          {/* Floating "📍 My Live Location" Action Hub (Top Right Desktop) */}
+          <div className="absolute top-4 right-4 z-20 hidden sm:flex flex-col items-end gap-2 max-w-[280px] sm:max-w-xs">
             {!userLiveLocation ? (
               <button
                 type="button"
@@ -1100,24 +1158,318 @@ export const RouteReports: React.FC = () => {
             )}
           </div>
 
-          {/* Map Legend (Bottom Left) */}
-          <div className="absolute bottom-6 left-4 z-20 bg-white/95 backdrop-blur-md rounded-xl p-2.5 shadow-md border border-surface-container text-[11px] font-semibold space-y-1 hidden md:block">
-            <p className="font-bold text-xs text-on-surface border-b border-surface-container pb-1">
-              Route Reports • வழியிலுள்ள புகார்கள்
-            </p>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-              <span>Start (தொடக்கப் புள்ளி)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-2.5 h-2.5 rounded-full bg-red-500" />
-              <span>Destination (சேருமிடம்)</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="w-3 h-1 rounded bg-blue-600" />
-              <span>Driving Route ({corridorMeters}m corridor)</span>
-            </div>
+          {/* Mobile Floating Action Buttons: Thumb-Friendly at bottom-right above BottomNav */}
+          <div className="sm:hidden absolute bottom-24 right-4 z-20 flex flex-col items-end gap-2">
+            {userLiveLocation && (
+              <button
+                type="button"
+                onClick={() => {
+                  setUserHasManuallyPanned(false);
+                  setFlyTrigger((p) => p + 1);
+                }}
+                className="w-11 h-11 rounded-full bg-white text-primary border border-surface-container shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+                aria-label="Center on my location"
+              >
+                <span className="material-symbols-outlined text-[22px]">center_focus_strong</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => handleGetLiveLocation(false)}
+              disabled={isLocating}
+              className={`w-12 h-12 rounded-full shadow-xl flex items-center justify-center transition-all active:scale-95 ${
+                isLocating
+                  ? 'bg-primary text-white animate-pulse'
+                  : userLiveLocation
+                  ? 'bg-emerald-600 text-white shadow-emerald-600/30'
+                  : 'bg-primary text-white shadow-primary/40'
+              }`}
+              aria-label="My Live Location"
+              title="My Live Location"
+            >
+              {isLocating ? (
+                <span className="material-symbols-outlined text-[24px] animate-spin">progress_activity</span>
+              ) : (
+                <span className="material-symbols-outlined text-[24px]">
+                  {userLiveLocation ? 'near_me' : 'my_location'}
+                </span>
+              )}
+            </button>
           </div>
+
+          {/* MOBILE ONLY: Floating Compact Route Card (Top) */}
+          <div className="md:hidden absolute top-16 left-3 right-3 z-20">
+            {mobileInputCollapsed && activeRoute ? (
+              // Collapsed Banner
+              <div
+                onClick={() => setMobileInputCollapsed(false)}
+                className="bg-white/95 backdrop-blur-md rounded-2xl p-3 border border-surface-container shadow-xl flex items-center justify-between gap-2 cursor-pointer active:bg-blue-50 transition-colors"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="w-8 h-8 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-[18px]">directions_car</span>
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold text-on-surface truncate">
+                      {fromCoords?.name || fromInput || 'Start'} → {toCoords?.name || toInput || 'End'}
+                    </p>
+                    <p className="text-[11px] text-blue-700 font-semibold">
+                      {activeRoute.distanceKm} • {activeRoute.durationFormatted}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="px-2.5 py-1 rounded-lg bg-surface-container-low text-primary text-xs font-bold shrink-0 flex items-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-[14px]">edit</span>
+                  <span>Edit</span>
+                </button>
+              </div>
+            ) : (
+              // Expanded Input Card
+              <div className="bg-white/95 backdrop-blur-md rounded-2xl p-3.5 border border-surface-container shadow-xl space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-on-surface flex items-center gap-1">
+                    <span className="material-symbols-outlined text-primary text-[16px]">route</span>
+                    <span>{language === 'en' ? 'Set Directions' : 'வழித்தடம் அமை'}</span>
+                  </span>
+                  {activeRoute && (
+                    <button
+                      type="button"
+                      onClick={() => setMobileInputCollapsed(true)}
+                      className="text-xs text-on-surface-variant hover:text-on-surface p-1"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">expand_less</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* From Input Mobile */}
+                <div className="relative">
+                  <div className="flex items-center gap-1.5 bg-surface-container-lowest border border-surface-container rounded-xl px-2.5 py-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shrink-0" />
+                    <input
+                      type="text"
+                      value={fromInput}
+                      onChange={(e) => {
+                        setFromInput(e.target.value);
+                        if (fromCoords && fromCoords.name !== e.target.value) {
+                          setFromCoords(null);
+                        }
+                      }}
+                      placeholder={language === 'en' ? 'Starting Point or My Location...' : 'புறப்படும் இடம்...'}
+                      className="w-full text-xs bg-transparent outline-none text-on-surface"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleUseMyLocationForFrom}
+                      className="text-primary hover:text-primary-dark shrink-0 p-1"
+                      title="Use My Location"
+                    >
+                      <span className="material-symbols-outlined text-[18px]">my_location</span>
+                    </button>
+                  </div>
+
+                  {fromSuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-surface-container z-40 max-h-40 overflow-y-auto divide-y divide-surface-container-low">
+                      {fromSuggestions.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handleSelectFrom(item);
+                          }}
+                          onTouchStart={(e) => {
+                            e.preventDefault();
+                            handleSelectFrom(item);
+                          }}
+                          onClick={() => handleSelectFrom(item)}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors truncate"
+                        >
+                          <span className="font-semibold text-on-surface">{item.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* To Input Mobile */}
+                <div className="relative">
+                  <div className="flex items-center gap-1.5 bg-surface-container-lowest border border-surface-container rounded-xl px-2.5 py-1.5">
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" />
+                    <input
+                      type="text"
+                      value={toInput}
+                      onChange={(e) => {
+                        setToInput(e.target.value);
+                        if (toCoords && toCoords.name !== e.target.value) {
+                          setToCoords(null);
+                        }
+                      }}
+                      placeholder={language === 'en' ? 'Destination Address or City...' : 'சேருமிடம்...'}
+                      className="w-full text-xs bg-transparent outline-none text-on-surface"
+                    />
+                  </div>
+
+                  {toSuggestions.length > 0 && (
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-surface-container z-40 max-h-40 overflow-y-auto divide-y divide-surface-container-low">
+                      {toSuggestions.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handleSelectTo(item);
+                          }}
+                          onTouchStart={(e) => {
+                            e.preventDefault();
+                            handleSelectTo(item);
+                          }}
+                          onClick={() => handleSelectTo(item)}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 transition-colors truncate"
+                        >
+                          <span className="font-semibold text-on-surface">{item.name}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Mobile Get Route Button */}
+                <button
+                  type="button"
+                  onClick={handleGetRoute}
+                  disabled={isRouting}
+                  className="w-full py-2 px-3 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-md"
+                >
+                  {isRouting ? (
+                    <>
+                      <span className="material-symbols-outlined text-[16px] animate-spin">progress_activity</span>
+                      <span>Calculating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="material-symbols-outlined text-[16px]">navigation</span>
+                      <span>{language === 'en' ? 'Get Directions' : 'வழித்தடம் காண்க'}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* MOBILE ONLY: Bottom Sheet Drawer for Route Reports */}
+          {activeRoute && (
+            <div
+              className={`md:hidden absolute left-0 right-0 bottom-0 z-30 bg-white rounded-t-3xl border-t border-surface-container shadow-2xl transition-all duration-300 flex flex-col ${
+                mobileDrawerOpen ? 'h-[75vh]' : 'h-16'
+              }`}
+            >
+              {/* Drawer Handle / Header Bar */}
+              <div
+                onClick={() => setMobileDrawerOpen(!mobileDrawerOpen)}
+                className="px-4 py-2.5 flex items-center justify-between cursor-pointer active:bg-surface-container-low shrink-0 border-b border-surface-container"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-blue-600 animate-pulse" />
+                  <span className="font-bold text-xs text-on-surface">
+                    {filteredRouteMatches.length}{' '}
+                    {language === 'en' ? 'Issues along route' : 'வழியிலுள்ள புகார்கள்'}
+                  </span>
+                  <span className="text-[10px] text-blue-700 font-semibold bg-blue-100 px-2 py-0.5 rounded-full">
+                    {corridorMeters >= 1000 ? `${corridorMeters / 1000}km` : `${corridorMeters}m`}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1 text-primary text-xs font-bold">
+                  <span>{mobileDrawerOpen ? 'Close' : 'View List'}</span>
+                  <span className="material-symbols-outlined text-[18px]">
+                    {mobileDrawerOpen ? 'expand_more' : 'expand_less'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Drawer Content (Visible when opened) */}
+              {mobileDrawerOpen && (
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0 bg-surface">
+                  {/* Corridor Distance Pills */}
+                  <div className="space-y-1">
+                    <span className="text-[11px] font-bold text-on-surface-variant">
+                      {language === 'en' ? 'Corridor Distance:' : 'தாழ்வார தூரம்:'}
+                    </span>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      {[250, 500, 1000, 2000].map((dist) => (
+                        <button
+                          key={dist}
+                          type="button"
+                          onClick={() => setCorridorMeters(dist)}
+                          className={`py-1 rounded-lg text-xs font-bold transition-all ${
+                            corridorMeters === dist
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white text-on-surface border border-surface-container'
+                          }`}
+                        >
+                          {dist >= 1000 ? `${dist / 1000}km` : `${dist}m`}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Reports List */}
+                  {filteredRouteMatches.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-on-surface-variant bg-white rounded-xl border border-surface-container">
+                      No issues found along this route within selected corridor.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {filteredRouteMatches.map((match) => {
+                        const c = match.complaint;
+                        const statusInfo = STATUS_INFO[c.status] || STATUS_INFO.SUBMITTED;
+                        const catInfo = CATEGORY_INFO[c.category] || CATEGORY_INFO.ROAD_DAMAGE;
+                        const isSelected = selectedComplaintId === c.id;
+
+                        return (
+                          <div
+                            key={c.id}
+                            onClick={() => handleSelectComplaintFromList(c.id)}
+                            className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                              isSelected
+                                ? 'bg-blue-50 border-blue-600 shadow-sm'
+                                : 'bg-white border-surface-container'
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-1 mb-1">
+                              <span className="font-bold text-xs text-on-surface">
+                                {c.complaintId} • {catInfo.labelEn}
+                              </span>
+                              <span className="text-[10px] font-bold text-amber-900 bg-amber-100 px-1.5 py-0.5 rounded-full">
+                                {match.distanceFormatted}
+                              </span>
+                            </div>
+                            <p className="text-xs text-on-surface line-clamp-2 mb-1.5">
+                              {c.description}
+                            </p>
+                            <div className="flex items-center justify-between text-[10px] text-on-surface-variant">
+                              <span className="truncate max-w-[180px]">📍 {c.location}</span>
+                              <span
+                                className="font-bold uppercase tracking-wider"
+                                style={{ color: statusInfo.pinColor }}
+                              >
+                                {statusInfo.labelEn}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

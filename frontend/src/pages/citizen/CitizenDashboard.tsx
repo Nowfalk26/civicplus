@@ -2,10 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { LeafletMap, UserLiveLocation } from '../../components/LeafletMap';
-import { ComplaintCard } from '../../components/ComplaintCard';
+import { MapErrorBoundary } from '../../components/ui/MapErrorBoundary';
 import { useStore } from '../../store/useStore';
 import { api } from '../../lib/api';
 import { DISTRICT_COORDS } from '../../lib/utils';
+import { isValidLatLng } from '../../lib/mapService';
 
 export const CitizenDashboard: React.FC = () => {
   const { user, language } = useStore();
@@ -41,7 +42,7 @@ export const CitizenDashboard: React.FC = () => {
     };
   }, []);
 
-  // 1. Core Real Geolocation API Fetcher
+  // 1. Core Real Geolocation API Fetcher with 2-Stage GPS -> Network Fallback
   const handleGetLiveLocation = (enableContinuousTracking: boolean = false) => {
     setLocationError(null);
 
@@ -75,101 +76,102 @@ export const CitizenDashboard: React.FC = () => {
     setIsLocating(true);
     const loadingToast = toast.loading(
       language === 'en'
-        ? 'Requesting device location...'
+        ? 'Acquiring device location...'
         : 'சாதன இருப்பிடத்தை கோருகிறது...',
       { id: 'geo-status' }
     );
 
-    const geoOptions: PositionOptions = {
-      enableHighAccuracy: true,
-      timeout: 15000,
-      maximumAge: 0,
+    const onLocationSuccess = (position: GeolocationPosition) => {
+      setIsLocating(false);
+      toast.dismiss(loadingToast);
+
+      const lat = Number(position.coords.latitude.toFixed(6));
+      const lng = Number(position.coords.longitude.toFixed(6));
+      const accuracy = position.coords.accuracy;
+
+      if (!isValidLatLng(lat, lng)) {
+        toast.error(
+          language === 'en'
+            ? 'Received invalid coordinates from device.'
+            : 'சாதனத்திலிருந்து தவறான ஆயத்தொலைவுகள் பெறப்பட்டன.',
+          { id: 'geo-status' }
+        );
+        return;
+      }
+
+      setUserLiveLocation({
+        lat,
+        lng,
+        accuracy,
+        heading: position.coords.heading,
+        speed: position.coords.speed,
+        timestamp: position.timestamp,
+      });
+
+      setUserHasManuallyPanned(false);
+      setFlyTrigger((prev) => prev + 1);
+
+      const accNotice =
+        accuracy && accuracy > 0
+          ? language === 'en'
+            ? ` (~${Math.round(accuracy)}m accuracy)`
+            : ` (~${Math.round(accuracy)} மீ துல்லியம்)`
+          : '';
+
+      toast.success(
+        language === 'en'
+          ? `Live Location acquired!${accNotice}`
+          : `நேரடி இருப்பிடம் பெறப்பட்டது!${accNotice}`,
+        { id: 'geo-status' }
+      );
+
+      if (enableContinuousTracking) {
+        startLiveTrackingWatcher();
+      }
     };
 
-    // Native browser Geolocation prompt & measurement
+    // Stage 1: Try High Accuracy GPS first (8 second timeout)
     navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setIsLocating(false);
-        toast.dismiss(loadingToast);
+      onLocationSuccess,
+      (error) => {
+        // If user denied permission, do not retry
+        if (error.code === error.PERMISSION_DENIED) {
+          setIsLocating(false);
+          toast.dismiss(loadingToast);
+          const msg =
+            language === 'en'
+              ? 'Location permission was denied. Please allow location access in your browser settings.'
+              : 'இருப்பிட அனுமதி மறுக்கப்பட்டது. உலாவி அமைப்புகளில் அனுமதியை வழங்கவும்.';
+          setLocationError({ type: 'DENIED', message: msg });
+          toast.error(msg, { duration: 5000 });
+          return;
+        }
 
-        const lat = Number(position.coords.latitude.toFixed(6));
-        const lng = Number(position.coords.longitude.toFixed(6));
-        const accuracy = position.coords.accuracy;
-
-        setUserLiveLocation({
-          lat,
-          lng,
-          accuracy,
-          heading: position.coords.heading,
-          speed: position.coords.speed,
-          timestamp: position.timestamp,
-        });
-
-        setUserHasManuallyPanned(false);
-        setFlyTrigger((prev) => prev + 1);
-
-        const accNotice =
-          accuracy && accuracy > 0
-            ? language === 'en'
-              ? ` (Accuracy: ~${Math.round(accuracy)}m)`
-              : ` (துல்லியம்: ~${Math.round(accuracy)} மீ)`
-            : '';
-
-        toast.success(
-          language === 'en'
-            ? `Live Location acquired!${accNotice}`
-            : `நேரடி இருப்பிடம் பெறப்பட்டது!${accNotice}`,
+        // Stage 2 Fallback: If timed out or position unavailable, retry with Wi-Fi / Cell tower
+        console.warn('GPS high-accuracy timed out or unavailable, falling back to network location...');
+        toast.loading(
+          language === 'en' ? 'Refining with network location...' : 'நெட்வொர்க் இருப்பிடத்தைக் கண்டறிகிறது...',
           { id: 'geo-status' }
         );
 
-        if (enableContinuousTracking) {
-          startLiveTrackingWatcher();
-        }
-      },
-      (error) => {
-        setIsLocating(false);
-        toast.dismiss(loadingToast);
+        navigator.geolocation.getCurrentPosition(
+          onLocationSuccess,
+          (fallbackErr) => {
+            setIsLocating(false);
+            toast.dismiss(loadingToast);
 
-        switch (error.code) {
-          case error.PERMISSION_DENIED: {
-            const msg =
-              language === 'en'
-                ? 'Location permission was denied. Please allow location access in your browser settings to use My Live Location.'
-                : 'இருப்பிட அனுமதி மறுக்கப்பட்டது. நேரடி இருப்பிடத்தைப் பயன்படுத்த உங்கள் உலாவி அமைப்புகளில் அனுமதியை வழங்கவும்.';
-            setLocationError({ type: 'DENIED', message: msg });
-            toast.error(msg, { duration: 5500 });
-            break;
-          }
-          case error.POSITION_UNAVAILABLE: {
-            const msg =
-              language === 'en'
-                ? 'Your current location could not be determined.'
-                : 'உங்கள் தற்போதைய இருப்பிடத்தை தீர்மானிக்க முடியவில்லை.';
-            setLocationError({ type: 'UNAVAILABLE', message: msg });
-            toast.error(msg);
-            break;
-          }
-          case error.TIMEOUT: {
-            const msg =
-              language === 'en'
-                ? 'Location request timed out. Please try again.'
-                : 'இருப்பிட கோரிக்கை நேரம் முடிந்தது. மீண்டும் முயற்சிக்கவும்.';
+            let msg =
+              language === 'en' ? 'Unable to determine your location.' : 'இருப்பிடத்தைக் கண்டறிய முடியவில்லை.';
+            if (fallbackErr.code === fallbackErr.TIMEOUT) {
+              msg = language === 'en' ? 'Location request timed out. Please retry.' : 'இருப்பிட கோரிக்கை நேரம் முடிந்தது.';
+            }
             setLocationError({ type: 'TIMEOUT', message: msg });
-            toast.error(msg);
-            break;
-          }
-          default: {
-            const msg =
-              language === 'en'
-                ? 'Unable to retrieve your current location.'
-                : 'தற்போதைய இருப்பிடத்தைப் பெற முடியவில்லை.';
-            setLocationError({ type: 'UNAVAILABLE', message: msg });
-            toast.error(msg);
-            break;
-          }
-        }
+            toast.error(msg, { id: 'geo-status' });
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+        );
       },
-      geoOptions
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
     );
   };
 
@@ -194,6 +196,8 @@ export const CitizenDashboard: React.FC = () => {
         const lat = Number(position.coords.latitude.toFixed(6));
         const lng = Number(position.coords.longitude.toFixed(6));
         const accuracy = position.coords.accuracy;
+
+        if (!isValidLatLng(lat, lng)) return;
 
         setUserLiveLocation({
           lat,
@@ -232,7 +236,7 @@ export const CitizenDashboard: React.FC = () => {
 
   // 4. Center on User Position
   const handleCenterOnMe = () => {
-    if (userLiveLocation) {
+    if (userLiveLocation && isValidLatLng(userLiveLocation.lat, userLiveLocation.lng)) {
       setUserHasManuallyPanned(false);
       setFlyTrigger((prev) => prev + 1);
       toast.success(language === 'en' ? 'Centered on your location' : 'உங்கள் இருப்பிடத்தில் நிலைநிறுத்தப்பட்டது');
@@ -273,7 +277,7 @@ export const CitizenDashboard: React.FC = () => {
     if (filter === 'UNRESOLVED' && c.status === 'RESOLVED') return false;
     if (filter === 'RESOLVED' && c.status !== 'RESOLVED') return false;
     if (selectedCategory !== 'ALL' && c.category !== selectedCategory) return false;
-    if (search) {
+    if (search.trim()) {
       const q = search.toLowerCase();
       return (
         c.complaintId.toLowerCase().includes(q) ||
@@ -287,12 +291,12 @@ export const CitizenDashboard: React.FC = () => {
   return (
     <div className="relative h-[calc(100vh-4rem)] flex flex-col overflow-hidden bg-surface">
       {/* Top Filter Bar */}
-      <div className="bg-white border-b border-surface-container-high px-4 py-2.5 z-20 flex flex-wrap items-center justify-between gap-2.5 shadow-2xs">
+      <div className="bg-white border-b border-surface-container-high px-4 py-2.5 z-20 flex flex-wrap items-center justify-between gap-2.5 shadow-2xs shrink-0">
         {/* Filter buttons */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 max-w-full">
           <button
             onClick={() => setFilter('ALL')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
               filter === 'ALL'
                 ? 'bg-primary text-white shadow-xs'
                 : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container'
@@ -303,7 +307,7 @@ export const CitizenDashboard: React.FC = () => {
 
           <button
             onClick={() => setFilter('MINE')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
               filter === 'MINE'
                 ? 'bg-primary text-white shadow-xs'
                 : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container'
@@ -315,7 +319,7 @@ export const CitizenDashboard: React.FC = () => {
 
           <button
             onClick={() => setFilter('UNRESOLVED')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
               filter === 'UNRESOLVED'
                 ? 'bg-amber-600 text-white shadow-xs'
                 : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container'
@@ -327,7 +331,7 @@ export const CitizenDashboard: React.FC = () => {
 
           <button
             onClick={() => setFilter('RESOLVED')}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all shrink-0 ${
               filter === 'RESOLVED'
                 ? 'bg-emerald-600 text-white shadow-xs'
                 : 'bg-surface-container-low text-on-surface-variant hover:bg-surface-container'
@@ -340,7 +344,7 @@ export const CitizenDashboard: React.FC = () => {
 
         {/* Search & Category Filter */}
         <div className="flex items-center gap-2 w-full sm:w-auto">
-          <div className="relative flex-1 sm:w-64">
+          <div className="relative flex-1 sm:w-56">
             <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-on-surface-variant text-[16px]">
               search
             </span>
@@ -367,7 +371,7 @@ export const CitizenDashboard: React.FC = () => {
             <option value="PUBLIC_SPACE">Public Space</option>
           </select>
 
-          {/* Quick "📍 My Live Location" Header Button */}
+          {/* Quick "📍 My Live Location" Header Button (Hidden on very small screens to avoid overflow, accessible via floating button) */}
           <button
             onClick={() => {
               if (isLiveTracking) {
@@ -377,7 +381,7 @@ export const CitizenDashboard: React.FC = () => {
               }
             }}
             disabled={isLocating}
-            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
+            className={`hidden sm:flex px-3 py-1.5 rounded-xl text-xs font-bold transition-all items-center gap-1.5 shrink-0 ${
               isLiveTracking
                 ? 'bg-emerald-600 text-white shadow-xs animate-pulse'
                 : userLiveLocation
@@ -410,28 +414,31 @@ export const CitizenDashboard: React.FC = () => {
             title="Open Dedicated Directions & Route Reports Discovery"
           >
             <span className="material-symbols-outlined text-[16px]">alt_route</span>
-            <span>{language === 'en' ? 'Directions & Reports' : 'வழித்தடம் & புகார்கள்'}</span>
+            <span className="hidden xs:inline">{language === 'en' ? 'Directions & Reports' : 'வழித்தடம் & புகார்கள்'}</span>
+            <span className="xs:hidden">{language === 'en' ? 'Route' : 'வழித்தடம்'}</span>
           </Link>
         </div>
       </div>
 
-      {/* Main Map Canvas & Overlay Drawer */}
-      <div className="relative flex-1 w-full h-full">
-        {/* Clean Main Civic Map with Live Location & Satellite Support */}
-        <LeafletMap
-          complaints={filteredComplaints}
-          center={mapCenter}
-          zoom={12}
-          height="100%"
-          className="rounded-none border-0"
-          userLocation={userLiveLocation}
-          flyToUserLocationTrigger={flyTrigger}
-          onUserPanned={() => setUserHasManuallyPanned(true)}
-          mapType={mapType}
-        />
+      {/* Main Map Canvas & Overlays */}
+      <div className="relative flex-1 w-full h-full min-h-0">
+        {/* Error Boundary Protected Map Canvas */}
+        <MapErrorBoundary>
+          <LeafletMap
+            complaints={filteredComplaints}
+            center={mapCenter}
+            zoom={12}
+            height="100%"
+            className="rounded-none border-0"
+            userLocation={userLiveLocation}
+            flyToUserLocationTrigger={flyTrigger}
+            onUserPanned={() => setUserHasManuallyPanned(true)}
+            mapType={mapType}
+          />
+        </MapErrorBoundary>
 
-        {/* Floating "📍 My Live Location" Hub Card */}
-        <div className="absolute top-4 right-4 z-20 flex flex-col items-end gap-2 max-w-[280px] sm:max-w-xs">
+        {/* Floating "📍 My Live Location" Hub Card (Desktop & Tablet) */}
+        <div className="absolute top-4 right-4 z-20 hidden sm:flex flex-col items-end gap-2 max-w-[280px] sm:max-w-xs">
           {!userLiveLocation ? (
             <button
               onClick={() => handleGetLiveLocation(false)}
@@ -524,6 +531,41 @@ export const CitizenDashboard: React.FC = () => {
           )}
         </div>
 
+        {/* Mobile Floating Action Buttons: Thumb-Friendly at bottom-right above BottomNav */}
+        <div className="sm:hidden absolute bottom-4 right-4 z-20 flex flex-col items-end gap-2">
+          {userLiveLocation && (
+            <button
+              onClick={handleCenterOnMe}
+              className="w-11 h-11 rounded-full bg-white text-primary border border-surface-container shadow-lg flex items-center justify-center active:scale-95 transition-transform"
+              aria-label="Center on my location"
+            >
+              <span className="material-symbols-outlined text-[22px]">center_focus_strong</span>
+            </button>
+          )}
+
+          <button
+            onClick={() => handleGetLiveLocation(false)}
+            disabled={isLocating}
+            className={`w-12 h-12 rounded-full shadow-xl flex items-center justify-center transition-all active:scale-95 ${
+              isLocating
+                ? 'bg-primary text-white animate-pulse'
+                : userLiveLocation
+                ? 'bg-emerald-600 text-white shadow-emerald-600/30'
+                : 'bg-primary text-white shadow-primary/40'
+            }`}
+            aria-label="My Live Location"
+            title="My Live Location"
+          >
+            {isLocating ? (
+              <span className="material-symbols-outlined text-[24px] animate-spin">progress_activity</span>
+            ) : (
+              <span className="material-symbols-outlined text-[24px]">
+                {userLiveLocation ? 'near_me' : 'my_location'}
+              </span>
+            )}
+          </button>
+        </div>
+
         {/* Real Geolocation Error / Warning Banner */}
         {locationError && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-11/12 max-w-md bg-white border-2 border-amber-300 rounded-2xl p-4 shadow-2xl animate-in fade-in slide-in-from-top-2">
@@ -603,7 +645,7 @@ export const CitizenDashboard: React.FC = () => {
           </button>
         </div>
 
-        {/* Map Legend Floating Pill (Positioned neatly at bottom left) */}
+        {/* Map Legend Floating Pill (Desktop) */}
         <div className="absolute bottom-6 left-4 z-20 bg-white/95 backdrop-blur-md rounded-xl p-2.5 shadow-md border border-surface-container text-[11px] font-semibold space-y-1 hidden md:block">
           <p className="font-bold text-xs text-on-surface border-b border-surface-container pb-1">
             Map Legend • வரைபட விளக்கம்
@@ -626,15 +668,15 @@ export const CitizenDashboard: React.FC = () => {
           </div>
         </div>
 
-        {/* Floating Action Button (FAB) "+" to Report Issue */}
+        {/* Desktop Report FAB */}
         <Link
-          to="/citizen/report"
-          className="absolute bottom-6 right-6 z-20 px-5 py-3.5 rounded-2xl bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-xl shadow-primary/40 flex items-center gap-2 transition-all hover:scale-105 active:scale-95 group"
+          to="/add-report"
+          className="hidden md:flex absolute bottom-6 right-6 z-20 px-5 py-3.5 rounded-2xl bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-xl shadow-primary/40 items-center gap-2 transition-all hover:scale-105 active:scale-95 group"
         >
           <span className="material-symbols-outlined text-[24px] group-hover:rotate-90 transition-transform">
             add
           </span>
-          <span className="hidden sm:inline">
+          <span>
             {language === 'en' ? 'Report New Problem' : 'புதிய புகார் அளி'}
           </span>
         </Link>

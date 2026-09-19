@@ -3,9 +3,11 @@ import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useStore } from '../../store/useStore';
 import { LeafletMap } from '../../components/LeafletMap';
+import { MapErrorBoundary } from '../../components/ui/MapErrorBoundary';
 import { PhotoUpload } from '../../components/PhotoUpload';
 import { CATEGORY_INFO, TN_DISTRICTS } from '../../lib/utils';
 import { api } from '../../lib/api';
+import { isValidLatLng } from '../../lib/mapService';
 
 export const ReportProblem: React.FC = () => {
   const { user, language } = useStore();
@@ -26,32 +28,50 @@ export const ReportProblem: React.FC = () => {
   const [description, setDescription] = useState<string>('');
   const [priority, setPriority] = useState<string>('MEDIUM');
 
-  // Auto GPS detection handler
+  // Auto GPS detection handler with 2-stage fallback
   const handleUseCurrentLocation = () => {
-    if ('geolocation' in navigator) {
-      toast.loading('Acquiring precise GPS coordinates...', { id: 'gps' });
-      navigator.geolocation.getCurrentPosition(
-        (position) => {
-          const lat = Number(position.coords.latitude.toFixed(6));
-          const lng = Number(position.coords.longitude.toFixed(6));
-          setLatitude(lat);
-          setLongitude(lng);
-          setLocation(`GPS Pin Location (${lat}, ${lng}), ${user?.location || 'Tamil Nadu'}`);
-          toast.success('GPS coordinates locked!', { id: 'gps' });
-        },
-        (err) => {
+    if (!('geolocation' in navigator)) {
+      toast.error('Geolocation is not supported by your browser.');
+      return;
+    }
+
+    toast.loading('Acquiring precise GPS coordinates...', { id: 'gps' });
+
+    const onSuccess = (position: GeolocationPosition) => {
+      const lat = Number(position.coords.latitude.toFixed(6));
+      const lng = Number(position.coords.longitude.toFixed(6));
+      if (!isValidLatLng(lat, lng)) {
+        toast.error('Invalid coordinates received.', { id: 'gps' });
+        return;
+      }
+      setLatitude(lat);
+      setLongitude(lng);
+      setLocation(`GPS Pin Location (${lat}, ${lng}), ${user?.location || 'Tamil Nadu'}`);
+      toast.success('GPS coordinates locked!', { id: 'gps' });
+    };
+
+    // Stage 1: Try GPS high accuracy
+    navigator.geolocation.getCurrentPosition(
+      onSuccess,
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
           toast.error(
-            err.code === err.PERMISSION_DENIED
-              ? 'Location permission was denied. Please allow location access in your browser settings.'
-              : 'Unable to determine device location.',
+            'Location permission was denied. Please allow location access in your browser settings.',
             { id: 'gps' }
           );
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-      );
-    } else {
-      toast.error('Geolocation is not supported by your browser.');
-    }
+          return;
+        }
+        // Stage 2: Fallback to network
+        navigator.geolocation.getCurrentPosition(
+          onSuccess,
+          () => {
+            toast.error('Unable to determine device location.', { id: 'gps' });
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+        );
+      },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
+    );
   };
 
   const handleMapPinSelected = (coord: { lat: number; lng: number }) => {
@@ -288,14 +308,16 @@ export const ReportProblem: React.FC = () => {
               </span>
             </div>
 
-            <LeafletMap
-              center={[latitude, longitude]}
-              zoom={13}
-              interactivePicker={true}
-              selectedCoord={[latitude, longitude]}
-              onLocationSelect={handleMapPinSelected}
-              height="280px"
-            />
+            <MapErrorBoundary>
+              <LeafletMap
+                center={[latitude, longitude]}
+                zoom={13}
+                interactivePicker={true}
+                selectedCoord={[latitude, longitude]}
+                onLocationSelect={handleMapPinSelected}
+                height="280px"
+              />
+            </MapErrorBoundary>
           </div>
 
           {/* Address and District selector */}

@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 import { CATEGORY_INFO, TN_DISTRICTS } from '../lib/utils';
 import { api } from '../lib/api';
 
 export const Landing: React.FC = () => {
   const { language, user } = useStore();
+  const navigate = useNavigate();
   const [stats, setStats] = useState({
     totalComplaints: 0,
     resolvedComplaints: 0,
@@ -13,6 +14,24 @@ export const Landing: React.FC = () => {
     fraudRate: 0,
     totalUsers: 0,
   });
+
+  const handleAddReport = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (user) {
+      navigate('/add-report');
+    } else {
+      navigate('/civic/login', { state: { from: { pathname: '/add-report' } } });
+    }
+  };
+
+  const handleViewCivicMap = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (user) {
+      navigate('/civic-map');
+    } else {
+      navigate('/civic/login', { state: { from: { pathname: '/civic-map' } } });
+    }
+  };
 
   useEffect(() => {
     api
@@ -59,22 +78,26 @@ export const Landing: React.FC = () => {
                 : 'சாலை சேதம், தெரு விளக்கு, வடிகால் மற்றும் மின்கம்பி சிக்கல்களை புகைப்பட ஆதாரத்துடன் எளிதாக பதிவு செய்யுங்கள். நேரடி வரைபடத்தில் அதிகாரிகளின் தீர்வை கண்காணியுங்கள்.'}
             </p>
 
-            {/* Action Buttons */}
+            {/* Action Buttons with Authentication Guard */}
             <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
               <Link
-                to={user ? '/citizen/report' : '/register'}
+                to={user ? '/add-report' : '/civic/login'}
+                state={!user ? { from: { pathname: '/add-report' } } : undefined}
+                onClick={handleAddReport}
                 className="min-h-[54px] px-8 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-base shadow-lg shadow-primary/30 flex items-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
               >
                 <span className="material-symbols-outlined text-[22px]">add_circle</span>
-                <span>{language === 'en' ? 'Report a Problem' : 'புகார் அளிக்கவும்'}</span>
+                <span>{language === 'en' ? 'Add Report' : 'புகார் சேர்க்கவும் (Add Report)'}</span>
               </Link>
 
               <Link
-                to={user ? '/citizen/dashboard' : '/login'}
+                to={user ? '/civic-map' : '/civic/login'}
+                state={!user ? { from: { pathname: '/civic-map' } } : undefined}
+                onClick={handleViewCivicMap}
                 className="min-h-[54px] px-8 rounded-xl bg-white hover:bg-surface-container-low text-on-surface border-2 border-outline-variant font-bold text-base shadow-xs flex items-center gap-2 transition-all"
               >
                 <span className="material-symbols-outlined text-[22px] text-primary">map</span>
-                <span>{language === 'en' ? 'View Civic Map' : 'வரைபடத்தை காண்க'}</span>
+                <span>{language === 'en' ? 'View Civic Map' : 'வரைபடத்தை காண்க (View Civic Map)'}</span>
               </Link>
             </div>
           </div>
@@ -162,7 +185,8 @@ export const Landing: React.FC = () => {
               </div>
 
               <Link
-                to={user ? '/citizen/dashboard' : '/civic/login'}
+                to={user ? '/civic-map' : '/civic/login'}
+                state={!user ? { from: { pathname: '/civic-map' } } : undefined}
                 className="mt-6 w-full py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs text-center flex items-center justify-center gap-1 shadow-sm"
               >
                 <span>{user ? 'Enter Citizen Portal' : 'Civic Resident Login'}</span>

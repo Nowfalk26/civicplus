@@ -80,6 +80,24 @@ export const App: React.FC = () => {
             <Route path="/register" element={<Register />} />
 
 
+            {/* Protected Civic Feature Direct Routes & Aliases */}
+            <Route
+              path="/add-report"
+              element={
+                <ProtectedRoute allowedRoles={['CITIZEN', 'ADMIN']}>
+                  <ReportProblem />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/civic-map"
+              element={
+                <ProtectedRoute allowedRoles={['CITIZEN', 'OFFICER', 'ADMIN']}>
+                  <CitizenDashboard />
+                </ProtectedRoute>
+              }
+            />
+
             {/* Citizen Portal */}
             <Route
               path="/citizen/dashboard"
@@ -91,6 +109,14 @@ export const App: React.FC = () => {
             />
             <Route
               path="/citizen/report"
+              element={
+                <ProtectedRoute allowedRoles={['CITIZEN', 'ADMIN']}>
+                  <ReportProblem />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/citizen/report-problem"
               element={
                 <ProtectedRoute allowedRoles={['CITIZEN', 'ADMIN']}>
                   <ReportProblem />

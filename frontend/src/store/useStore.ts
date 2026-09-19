@@ -55,6 +55,47 @@ export const useStore = create<AppState>((set) => {
       } else {
         initialUser = parsed;
         initialToken = localStorage.getItem('civics_access_token') || null;
+
+        // Session validation (Case G): Check if access token is expired
+        if (initialToken) {
+          try {
+            const parts = initialToken.split('.');
+            if (parts.length === 3) {
+              const payload = JSON.parse(atob(parts[1]));
+              if (payload.exp && payload.exp * 1000 < Date.now()) {
+                // Access token expired, check if refresh token is valid
+                const refreshToken = localStorage.getItem('civics_refresh_token');
+                let refreshValid = false;
+                if (refreshToken) {
+                  try {
+                    const rParts = refreshToken.split('.');
+                    if (rParts.length === 3) {
+                      const rPayload = JSON.parse(atob(rParts[1]));
+                      if (rPayload.exp && rPayload.exp * 1000 > Date.now()) {
+                        refreshValid = true;
+                      }
+                    }
+                  } catch {
+                    refreshValid = false;
+                  }
+                }
+                if (!refreshValid) {
+                  localStorage.removeItem('civics_user');
+                  localStorage.removeItem('civics_access_token');
+                  localStorage.removeItem('civics_refresh_token');
+                  initialUser = null;
+                  initialToken = null;
+                }
+              }
+            }
+          } catch {
+            localStorage.removeItem('civics_user');
+            localStorage.removeItem('civics_access_token');
+            localStorage.removeItem('civics_refresh_token');
+            initialUser = null;
+            initialToken = null;
+          }
+        }
       }
     } catch {
       localStorage.removeItem('civics_user');
@@ -113,3 +154,9 @@ export const useStore = create<AppState>((set) => {
     },
   };
 });
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('civics_session_expired', () => {
+    useStore.getState().logout();
+  });
+}

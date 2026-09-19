@@ -55,6 +55,15 @@ api.interceptors.response.use(
           localStorage.removeItem('civics_access_token');
           localStorage.removeItem('civics_refresh_token');
           localStorage.removeItem('civics_user');
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('civics_session_expired'));
+          }
+        }
+      } else {
+        localStorage.removeItem('civics_access_token');
+        localStorage.removeItem('civics_user');
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new Event('civics_session_expired'));
         }
       }
     }

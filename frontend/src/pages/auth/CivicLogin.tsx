@@ -56,15 +56,17 @@ export const CivicLogin: React.FC = () => {
     resolver: zodResolver(civicEmailSchema),
   });
 
+  const fromState = (location.state as any)?.from;
+  const redirectPath = typeof fromState === 'string' ? fromState : fromState?.pathname;
+
   const handleSuccessfulAuth = (user: any, accessToken: string, refreshToken?: string) => {
     setAuth(user, accessToken, refreshToken);
     toast.success(`Welcome back, ${user.name || user.username}!`);
 
-    const redirectPath = (location.state as any)?.from?.pathname;
     if (redirectPath) {
-      navigate(redirectPath);
+      navigate(redirectPath, { replace: true });
     } else {
-      navigate('/citizen/dashboard');
+      navigate('/citizen/dashboard', { replace: true });
     }
   };
 
@@ -176,6 +178,28 @@ export const CivicLogin: React.FC = () => {
               ? 'Sign in to file complaints, upvote local issues, and track verified civic resolutions.'
               : 'புகார்களைப் பதிவு செய்யவும், தீர்வுகளைக் கண்காணிக்கவும் உள்நுழையுங்கள்.'}
           </p>
+
+          {redirectPath && (
+            <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-left flex items-start gap-2.5">
+              <span className="material-symbols-outlined text-emerald-700 text-[20px] shrink-0 mt-0.5">
+                lock
+              </span>
+              <div>
+                <p className="text-xs font-bold text-emerald-900">
+                  {redirectPath.includes('report')
+                    ? 'Login Required for Add Report'
+                    : redirectPath.includes('map')
+                    ? 'Login Required for Civic Map'
+                    : 'Authentication Required'}
+                </p>
+                <p className="text-[11px] text-emerald-700 mt-0.5">
+                  {language === 'en'
+                    ? 'Please sign in. You will be automatically redirected to your requested page.'
+                    : 'தொடர உள்நுழையவும். நீங்கள் கோரிய பக்கத்திற்கு தானாகவே அழைத்துச் செல்லப்படுவீர்கள்.'}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* AUTH METHOD OPTIONS */}

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useStore } from '../store/useStore';
 
 export const Login: React.FC = () => {
   const { language } = useStore();
+  const location = useLocation();
 
   return (
     <div className="min-h-[calc(100vh-4rem)] flex items-center justify-center p-4 bg-surface">
@@ -31,6 +32,7 @@ export const Login: React.FC = () => {
           {/* 1. Civic Portal */}
           <Link
             to="/civic/login"
+            state={location.state}
             className="group p-6 rounded-2xl border-2 border-emerald-100 bg-emerald-50/40 hover:bg-emerald-50 hover:border-emerald-300 transition-all flex flex-col justify-between shadow-xs hover:shadow-md hover:-translate-y-1"
           >
             <div className="space-y-3">
@@ -57,6 +59,7 @@ export const Login: React.FC = () => {
           {/* 2. Officer Portal */}
           <Link
             to="/officer/login"
+            state={location.state}
             className="group p-6 rounded-2xl border-2 border-blue-100 bg-blue-50/40 hover:bg-blue-50 hover:border-blue-300 transition-all flex flex-col justify-between shadow-xs hover:shadow-md hover:-translate-y-1"
           >
             <div className="space-y-3">
@@ -83,6 +86,7 @@ export const Login: React.FC = () => {
           {/* 3. Controller Portal */}
           <Link
             to="/controller/login"
+            state={location.state}
             className="group p-6 rounded-2xl border-2 border-purple-100 bg-purple-50/40 hover:bg-purple-50 hover:border-purple-300 transition-all flex flex-col justify-between shadow-xs hover:shadow-md hover:-translate-y-1"
           >
             <div className="space-y-3">

@@ -6,8 +6,9 @@ const getBaseUrl = (): string => {
   if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
     return 'http://localhost:3000/api';
   }
-  return envUrl || '/api';
+  return envUrl || 'https://civicplus-backend.vercel.app/api';
 };
+
 
 export const API_URL = getBaseUrl();
 

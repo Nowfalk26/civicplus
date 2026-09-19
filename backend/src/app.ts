@@ -52,6 +52,21 @@ app.use(cookieParser());
 // Global Rate Limiting
 app.use('/api', globalRateLimiter);
 
+// Root Status Endpoint
+app.get('/', (_req: Request, res: Response) => {
+  res.json({
+    status: 'online',
+    platform: 'Civics Plus Tamil Nadu Backend API',
+    message: 'Backend server is active and responding to requests.',
+    endpoints: {
+      health: '/api/health',
+      auth: '/api/auth',
+      complaints: '/api/complaints',
+      analytics: '/api/analytics',
+    },
+  });
+});
+
 // System Health Check
 app.get('/api/health', (_req: Request, res: Response) => {
   res.json({
@@ -62,6 +77,7 @@ app.get('/api/health', (_req: Request, res: Response) => {
     region: 'Tamil Nadu, India',
   });
 });
+
 
 // Mount Routes
 app.use('/api/auth', authRoutes);

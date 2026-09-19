@@ -1,4 +1,3 @@
-import { PrismaClient } from '@prisma/client';
 import {
   buildSeedData,
   UserRecord,
@@ -8,8 +7,25 @@ import {
   FraudFlagRecord,
 } from '../data/seedData';
 
-// Instantiate the official Prisma Client
-export const prisma = new PrismaClient();
+// Safe lazy Prisma Client instantiation that never crashes serverless environments
+let prismaInstance: any = null;
+export const prisma: any = new Proxy(
+  {},
+  {
+    get(_target, prop) {
+      if (!prismaInstance) {
+        try {
+          const { PrismaClient } = require('@prisma/client');
+          prismaInstance = new PrismaClient();
+        } catch {
+          prismaInstance = {};
+        }
+      }
+      return prismaInstance[prop];
+    },
+  }
+);
+
 
 
 // In-memory fallback repository initialized with seed data

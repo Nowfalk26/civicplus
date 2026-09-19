@@ -25,6 +25,12 @@ export interface UserLiveLocation {
   timestamp?: number;
 }
 
+export interface MapPlacePoint {
+  lat: number;
+  lng: number;
+  name: string;
+}
+
 interface LeafletMapProps {
   complaints?: MapComplaint[];
   center?: [number, number];
@@ -37,6 +43,11 @@ interface LeafletMapProps {
   userLocation?: UserLiveLocation | null;
   flyToUserLocationTrigger?: number;
   onUserPanned?: () => void;
+  mapType?: 'streets' | 'satellite';
+  routeGeometry?: [number, number][] | null;
+  fromLocation?: MapPlacePoint | null;
+  destinationLocation?: MapPlacePoint | null;
+  fitRouteTrigger?: number;
 }
 
 export const LeafletMap: React.FC<LeafletMapProps> = ({
@@ -51,11 +62,19 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   userLocation = null,
   flyToUserLocationTrigger = 0,
   onUserPanned,
+  mapType = 'streets',
+  routeGeometry = null,
+  fromLocation = null,
+  destinationLocation = null,
+  fitRouteTrigger = 0,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
+  const baseTileLayerRef = useRef<L.TileLayer | null>(null);
+  const satelliteLabelsLayerRef = useRef<L.TileLayer | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
   const userLocationLayerRef = useRef<L.LayerGroup | null>(null);
+  const routeLayerRef = useRef<L.LayerGroup | null>(null);
   const pickerMarkerRef = useRef<L.Marker | null>(null);
 
   // Initialize map
@@ -68,17 +87,14 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       scrollWheelZoom: true,
     }).setView(center, zoom);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-      maxZoom: 19,
-    }).addTo(map);
-
     const markersLayer = L.layerGroup().addTo(map);
     markersLayerRef.current = markersLayer;
 
     const userLocationLayer = L.layerGroup().addTo(map);
     userLocationLayerRef.current = userLocationLayer;
+
+    const routeLayer = L.layerGroup().addTo(map);
+    routeLayerRef.current = routeLayer;
 
     mapInstanceRef.current = map;
 
@@ -102,6 +118,51 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       mapInstanceRef.current = null;
     };
   }, []);
+
+  // Update Tile Layer dynamically on mapType switch without page reload
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    const map = mapInstanceRef.current;
+
+    if (baseTileLayerRef.current) {
+      map.removeLayer(baseTileLayerRef.current);
+      baseTileLayerRef.current = null;
+    }
+    if (satelliteLabelsLayerRef.current) {
+      map.removeLayer(satelliteLabelsLayerRef.current);
+      satelliteLabelsLayerRef.current = null;
+    }
+
+    if (mapType === 'satellite') {
+      // Real ESRI World Imagery (High-Resolution Satellite)
+      baseTileLayerRef.current = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        {
+          attribution:
+            'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+          maxZoom: 19,
+        }
+      ).addTo(map);
+
+      // Real Reference Labels & Borders Layer
+      satelliteLabelsLayerRef.current = L.tileLayer(
+        'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+        {
+          maxZoom: 19,
+        }
+      ).addTo(map);
+    } else {
+      // Real Standard OpenStreetMap Street Tiles
+      baseTileLayerRef.current = L.tileLayer(
+        'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+        {
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+          maxZoom: 19,
+        }
+      ).addTo(map);
+    }
+  }, [mapType]);
 
   // Update center & zoom if changed
   useEffect(() => {
@@ -338,6 +399,125 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       );
     }
   }, [flyToUserLocationTrigger]);
+
+  // Update Route Polyline & Destination/Origin Markers
+  useEffect(() => {
+    if (!mapInstanceRef.current || !routeLayerRef.current) return;
+    routeLayerRef.current.clearLayers();
+
+    // 1. Draw Real Road Route Polyline if present
+    if (routeGeometry && routeGeometry.length > 0) {
+      // High-contrast casing line
+      const casing = L.polyline(routeGeometry, {
+        color: '#1e3a8a',
+        weight: 8,
+        opacity: 0.85,
+        lineCap: 'round',
+        lineJoin: 'round',
+      });
+      // Active route line
+      const line = L.polyline(routeGeometry, {
+        color: '#3b82f6',
+        weight: 5,
+        opacity: 1,
+        lineCap: 'round',
+        lineJoin: 'round',
+      });
+      routeLayerRef.current.addLayer(casing);
+      routeLayerRef.current.addLayer(line);
+    }
+
+    // 2. From / Origin Marker (if not using the pulsing "You are here" beacon)
+    if (
+      fromLocation &&
+      (!userLocation ||
+        Math.abs(fromLocation.lat - userLocation.lat) > 0.0001 ||
+        Math.abs(fromLocation.lng - userLocation.lng) > 0.0001)
+    ) {
+      const fromIcon = L.divIcon({
+        className: 'user-live-location-container',
+        html: `
+          <div style="position: relative; width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;">
+            <div style="
+              width: 28px;
+              height: 28px;
+              background-color: #16a34a;
+              border: 2px solid white;
+              border-radius: 50% 50% 50% 0;
+              transform: rotate(-45deg);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              box-shadow: 0 4px 10px rgba(22,163,74,0.5);
+            ">
+              <span class="material-symbols-outlined" style="transform: rotate(45deg); font-size: 16px; color: white;">trip_origin</span>
+            </div>
+          </div>
+        `,
+        iconSize: [36, 36],
+        iconAnchor: [18, 36],
+        popupAnchor: [0, -36],
+      });
+      const originMarker = L.marker([fromLocation.lat, fromLocation.lng], {
+        icon: fromIcon,
+        zIndexOffset: 900,
+      });
+      originMarker.bindPopup(`<strong>📍 Origin:</strong><br/>${fromLocation.name}`);
+      routeLayerRef.current.addLayer(originMarker);
+    }
+
+    // 3. Destination Marker (Red pin with flag)
+    if (destinationLocation) {
+      const destIcon = L.divIcon({
+        className: 'user-live-location-container',
+        html: `
+          <div style="position: relative; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center;">
+            <div style="
+              width: 32px;
+              height: 32px;
+              background-color: #dc2626;
+              border: 2px solid white;
+              border-radius: 50% 50% 50% 0;
+              transform: rotate(-45deg);
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              box-shadow: 0 4px 12px rgba(220,38,38,0.55);
+            ">
+              <span class="material-symbols-outlined" style="transform: rotate(45deg); font-size: 18px; color: white;">flag</span>
+            </div>
+          </div>
+        `,
+        iconSize: [40, 40],
+        iconAnchor: [20, 40],
+        popupAnchor: [0, -40],
+      });
+      const destMarker = L.marker([destinationLocation.lat, destinationLocation.lng], {
+        icon: destIcon,
+        zIndexOffset: 950,
+      });
+      destMarker.bindPopup(`<strong>🏁 Destination:</strong><br/>${destinationLocation.name}`);
+      routeLayerRef.current.addLayer(destMarker);
+    }
+  }, [routeGeometry, fromLocation, destinationLocation, userLocation]);
+
+  // Fit bounds when fitRouteTrigger fires
+  useEffect(() => {
+    if (!mapInstanceRef.current) return;
+    if (fitRouteTrigger && fitRouteTrigger > 0) {
+      const points: [number, number][] = [];
+      if (routeGeometry && routeGeometry.length > 0) {
+        routeGeometry.forEach((p) => points.push(p));
+      } else {
+        if (fromLocation) points.push([fromLocation.lat, fromLocation.lng]);
+        if (destinationLocation) points.push([destinationLocation.lat, destinationLocation.lng]);
+      }
+      if (points.length > 0) {
+        const bounds = L.latLngBounds(points);
+        mapInstanceRef.current.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
+      }
+    }
+  }, [fitRouteTrigger]);
 
   return (
     <div className={`relative w-full rounded-2xl overflow-hidden border border-surface-container-high shadow-sm ${className}`} style={{ height }}>

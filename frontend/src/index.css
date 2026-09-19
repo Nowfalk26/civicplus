@@ -61,3 +61,29 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #737686;
 }
+
+/* Live Location Pulse & Radar Beacon */
+@keyframes live-pulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 18px rgba(37, 99, 235, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0);
+  }
+}
+
+.user-live-location-pin {
+  animation: live-pulse 2s infinite cubic-bezier(0.45, 0, 0.55, 1);
+}
+
+.user-live-location-container {
+  background: transparent !important;
+  border: none !important;
+}
+

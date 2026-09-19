@@ -39,11 +39,15 @@ export const ReportProblem: React.FC = () => {
           setLocation(`GPS Pin Location (${lat}, ${lng}), ${user?.location || 'Tamil Nadu'}`);
           toast.success('GPS coordinates locked!', { id: 'gps' });
         },
-        () => {
-          toast.error('Unable to fetch live GPS. Using map center coordinates.', {
-            id: 'gps',
-          });
-        }
+        (err) => {
+          toast.error(
+            err.code === err.PERMISSION_DENIED
+              ? 'Location permission was denied. Please allow location access in your browser settings.'
+              : 'Unable to determine device location.',
+            { id: 'gps' }
+          );
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
       );
     } else {
       toast.error('Geolocation is not supported by your browser.');

@@ -16,6 +16,15 @@ export interface MapComplaint {
   photos?: { url: string; type: string }[];
 }
 
+export interface UserLiveLocation {
+  lat: number;
+  lng: number;
+  accuracy?: number;
+  heading?: number | null;
+  speed?: number | null;
+  timestamp?: number;
+}
+
 interface LeafletMapProps {
   complaints?: MapComplaint[];
   center?: [number, number];
@@ -25,6 +34,9 @@ interface LeafletMapProps {
   onLocationSelect?: (coord: { lat: number; lng: number }) => void;
   className?: string;
   height?: string;
+  userLocation?: UserLiveLocation | null;
+  flyToUserLocationTrigger?: number;
+  onUserPanned?: () => void;
 }
 
 export const LeafletMap: React.FC<LeafletMapProps> = ({
@@ -36,10 +48,14 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
   onLocationSelect,
   className = '',
   height = '100%',
+  userLocation = null,
+  flyToUserLocationTrigger = 0,
+  onUserPanned,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
   const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const userLocationLayerRef = useRef<L.LayerGroup | null>(null);
   const pickerMarkerRef = useRef<L.Marker | null>(null);
 
   // Initialize map
@@ -60,7 +76,18 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
 
     const markersLayer = L.layerGroup().addTo(map);
     markersLayerRef.current = markersLayer;
+
+    const userLocationLayer = L.layerGroup().addTo(map);
+    userLocationLayerRef.current = userLocationLayer;
+
     mapInstanceRef.current = map;
+
+    // Track user drag to prevent forcing center if user panned away
+    map.on('dragstart', () => {
+      if (onUserPanned) {
+        onUserPanned();
+      }
+    });
 
     // Click handler for location picker
     if (interactivePicker && onLocationSelect) {
@@ -207,6 +234,110 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
       pickerMarkerRef.current = null;
     }
   }, [selectedCoord]);
+
+  // Update real user live location marker & accuracy circle
+  useEffect(() => {
+    if (!mapInstanceRef.current || !userLocationLayerRef.current) return;
+
+    userLocationLayerRef.current.clearLayers();
+
+    if (userLocation && typeof userLocation.lat === 'number' && typeof userLocation.lng === 'number') {
+      // 1. Accuracy Circle (if reported and realistic)
+      if (userLocation.accuracy && userLocation.accuracy > 5 && userLocation.accuracy < 100000) {
+        const accuracyCircle = L.circle([userLocation.lat, userLocation.lng], {
+          radius: userLocation.accuracy,
+          color: '#2563eb',
+          fillColor: '#3b82f6',
+          fillOpacity: 0.12,
+          weight: 1.5,
+          dashArray: '4, 4',
+        });
+        userLocationLayerRef.current.addLayer(accuracyCircle);
+      }
+
+      // 2. Real Live Pin with Pulsing Ripple and "You are here" label
+      const livePinIcon = L.divIcon({
+        className: 'user-live-location-container',
+        html: `
+          <div style="position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;">
+            <div class="user-live-location-pin" style="
+              width: 20px;
+              height: 20px;
+              background: #2563eb;
+              border: 3.5px solid white;
+              border-radius: 50%;
+              box-shadow: 0 0 14px rgba(37, 99, 235, 0.9), 0 2px 6px rgba(0,0,0,0.35);
+            "></div>
+            <div style="
+              position: absolute;
+              top: -24px;
+              background: #0b1c30;
+              color: white;
+              font-size: 11px;
+              font-weight: 700;
+              padding: 2px 8px;
+              border-radius: 9999px;
+              white-space: nowrap;
+              box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+              border: 1px solid rgba(255,255,255,0.25);
+              pointer-events: none;
+              display: flex;
+              align-items: center;
+              gap: 4px;
+            ">
+              <span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #22c55e;"></span>
+              <span>You are here</span>
+            </div>
+          </div>
+        `,
+        iconSize: [44, 44],
+        iconAnchor: [22, 22],
+        popupAnchor: [0, -22],
+      });
+
+      const userMarker = L.marker([userLocation.lat, userLocation.lng], {
+        icon: livePinIcon,
+        zIndexOffset: 1000,
+      });
+
+      const accuracyNotice = userLocation.accuracy
+        ? `<div style="font-size: 11px; color: #2563eb; font-weight: 600; margin-bottom: 4px;">Accuracy: approximately ${Math.round(userLocation.accuracy)} meters</div>`
+        : '';
+
+      const popupHtml = `
+        <div style="font-family: inherit; font-size: 13px; min-width: 190px; line-height: 1.4;">
+          <div style="font-weight: 700; color: #0b1c30; font-size: 14px; margin-bottom: 3px; display: flex; align-items: center; gap: 4px;">
+            <span>📍</span> <span>You are here</span>
+          </div>
+          <div style="font-size: 11px; color: #16a34a; font-weight: 600; margin-bottom: 4px;">
+            ● Real Device Location Verified
+          </div>
+          ${accuracyNotice}
+          <div style="font-size: 11px; color: #737686; font-family: monospace; background: #f1f5f9; padding: 4px 6px; border-radius: 6px;">
+            ${userLocation.lat.toFixed(6)}, ${userLocation.lng.toFixed(6)}
+          </div>
+        </div>
+      `;
+
+      userMarker.bindPopup(popupHtml);
+      userLocationLayerRef.current.addLayer(userMarker);
+    }
+  }, [userLocation]);
+
+  // Smooth flyTo animation when flyToUserLocationTrigger changes
+  useEffect(() => {
+    if (!mapInstanceRef.current || !userLocation) return;
+    if (flyToUserLocationTrigger > 0) {
+      mapInstanceRef.current.flyTo(
+        [userLocation.lat, userLocation.lng],
+        Math.max(mapInstanceRef.current.getZoom(), 15),
+        {
+          animate: true,
+          duration: 1.2,
+        }
+      );
+    }
+  }, [flyToUserLocationTrigger]);
 
   return (
     <div className={`relative w-full rounded-2xl overflow-hidden border border-surface-container-high shadow-sm ${className}`} style={{ height }}>

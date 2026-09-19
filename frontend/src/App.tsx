@@ -42,11 +42,14 @@ import { AdminSettings } from './pages/admin/AdminSettings';
 import { AdminOfficerApprovals } from './pages/admin/AdminOfficerApprovals';
 import { AdminProfileRequests } from './pages/admin/AdminProfileRequests';
 
+import { StartupSplash } from './components/ui/StartupSplash';
+
 const queryClient = new QueryClient();
 
 export const App: React.FC = () => {
   return (
     <QueryClientProvider client={queryClient}>
+      <StartupSplash />
       <BrowserRouter>
         <Toaster
           position="top-right"

@@ -1,0 +1,11 @@
+{
+  "success": true,
+  "stats": {
+    "totalComplaints": 4,
+    "resolvedComplaints": 1,
+    "inProgressComplaints": 2,
+    "pendingComplaints": 1,
+    "citizenCount": 12,
+    "officerCount": 3
+  }
+}

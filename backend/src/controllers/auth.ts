@@ -1,10 +1,15 @@
 import { Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
-import { inMemoryDb } from '../lib/prisma';
+import { User, IUser } from '../models/User';
+import { OfficerRequest } from '../models/OfficerRequest';
+import { Employee } from '../models/Employee';
+import { getNextAccountNumber } from '../models/Counter';
+import { connectDb } from '../lib/db';
 import {
   generateAccessToken,
   generateRefreshToken,
+  verifyAccessToken,
   verifyRefreshToken,
   AuthenticatedRequest,
 } from '../middleware/auth';
@@ -25,8 +30,10 @@ const loginSchema = z.object({
 });
 
 export const authController = {
+  // POST /api/auth/register (Citizen standard registration)
   register: async (req: Request, res: Response): Promise<void> => {
     try {
+      await connectDb();
       const validation = registerSchema.safeParse(req.body);
       if (!validation.success) {
         res.status(400).json({
@@ -37,49 +44,45 @@ export const authController = {
       }
 
       const { username, email, phone, password, location } = validation.data;
+      const normalizedEmail = email.toLowerCase().trim();
 
-      // Check if user already exists
-      const existingEmail = inMemoryDb.users.find(
-        (u) => u.email.toLowerCase() === email.toLowerCase()
-      );
-      if (existingEmail) {
-        res.status(400).json({
-          success: false,
-          message: 'An account with this email address already exists.',
-        });
-        return;
-      }
+      const existingUser = await User.findOne({
+        $or: [
+          { email: normalizedEmail },
+          { phone },
+          { username: username.toLowerCase().trim() },
+        ],
+      });
 
-      const existingPhone = inMemoryDb.users.find((u) => u.phone === phone);
-      if (existingPhone) {
-        res.status(400).json({
-          success: false,
-          message: 'An account with this phone number already exists.',
-        });
-        return;
-      }
+      if (existingUser) {
+        let msg = 'An account with these details already exists.';
+        if (existingUser.email === normalizedEmail) msg = 'An account with this email address already exists.';
+        else if (existingUser.phone === phone) msg = 'An account with this phone number already exists.';
+        else if (existingUser.username === username.toLowerCase().trim()) msg = 'This username is already taken.';
 
-      const existingUsername = inMemoryDb.users.find(
-        (u) => u.username.toLowerCase() === username.toLowerCase()
-      );
-      if (existingUsername) {
-        res.status(400).json({
-          success: false,
-          message: 'This username is already taken. Please choose another.',
-        });
+        res.status(400).json({ success: false, message: msg });
         return;
       }
 
       const hashedPassword = await bcrypt.hash(password, 10);
+      const accountNumber = await getNextAccountNumber();
 
-      const newUser = inMemoryDb.createUser({
-        username,
-        email,
+      const newUser = await User.create({
+        accountNumber,
+        username: username.toLowerCase().trim(),
+        name: username,
+        email: normalizedEmail,
         phone,
         password: hashedPassword,
         role: 'CITIZEN',
         location,
         avatarUrl: `https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150`,
+        presenceStatus: 'ONLINE',
+        isOnline: true,
+        accountStatus: 'ACTIVE',
+        lastLoginAt: new Date(),
+        lastSeenAt: new Date(),
+        successfulLoginCount: 1,
       });
 
       const accessToken = generateAccessToken({
@@ -107,27 +110,26 @@ export const authController = {
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
-      await emailService.sendWelcomeEmail(newUser.email, newUser.username);
+      await emailService.sendWelcomeEmail(newUser.email, newUser.username).catch(() => {});
 
-      const { password: _, ...userSafe } = newUser;
+      const userObj = newUser.toJSON();
       res.status(201).json({
         success: true,
         message: 'Registration successful. Welcome to Civics Plus!',
-        user: userSafe,
+        user: userObj,
         accessToken,
         refreshToken,
       });
     } catch (error: any) {
       console.error('Register error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Internal server error during registration.',
-      });
+      res.status(500).json({ success: false, message: 'Registration failed.' });
     }
   },
 
+  // POST /api/auth/login (Standard login)
   login: async (req: Request, res: Response): Promise<void> => {
     try {
+      await connectDb();
       const validation = loginSchema.safeParse(req.body);
       if (!validation.success) {
         res.status(400).json({
@@ -138,53 +140,48 @@ export const authController = {
       }
 
       const { identifier, password } = validation.data;
-      const user = inMemoryDb.findUserByEmailOrPhone(identifier);
+      const normalized = identifier.toLowerCase().trim();
+
+      const user = await User.findOne({
+        $or: [{ email: normalized }, { phone: identifier.trim() }, { username: normalized }],
+      }).select('+password');
 
       if (!user) {
+        res.status(401).json({ success: false, message: 'Invalid credentials. User not found.' });
+        return;
+      }
+
+      if (!user.password) {
         res.status(401).json({
           success: false,
-          message: 'Invalid credentials. User not found.',
+          message: 'This account uses Google Sign-In or Mobile OTP. Please log in with that method.',
         });
         return;
       }
 
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
-        res.status(401).json({
-          success: false,
-          message: 'Invalid credentials. Password incorrect.',
-        });
+        await User.findByIdAndUpdate(user._id, { $inc: { failedLoginCount: 1, loginAttemptCount: 1 } });
+        res.status(401).json({ success: false, message: 'Invalid credentials. Password incorrect.' });
         return;
       }
 
-      // Ban verification
-      if (user.isBanned) {
-        if (user.bannedUntil && new Date(user.bannedUntil) > new Date()) {
-          res.status(403).json({
-            success: false,
-            message: `Account suspended until ${new Date(user.bannedUntil).toLocaleDateString('en-IN')}. Fraud score: ${user.fraudScore}`,
-            bannedUntil: user.bannedUntil,
-          });
-          return;
-        } else if (!user.bannedUntil) {
-          res.status(403).json({
-            success: false,
-            message: 'Your account has been permanently suspended by administration for civic fraud.',
-          });
-          return;
-        }
+      if (user.isBanned || user.accountStatus === 'SUSPENDED') {
+        res.status(403).json({ success: false, message: 'Your account is suspended.' });
+        return;
       }
 
-      const accessToken = generateAccessToken({
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-      });
-      const refreshToken = generateRefreshToken({
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-      });
+      // Update presence and login statistics in MongoDB
+      user.isOnline = true;
+      user.presenceStatus = 'ONLINE';
+      user.lastLoginAt = new Date();
+      user.lastSeenAt = new Date();
+      user.successfulLoginCount = (user.successfulLoginCount || 0) + 1;
+      user.loginAttemptCount = (user.loginAttemptCount || 0) + 1;
+      await user.save();
+
+      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
+      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
 
       res.cookie('accessToken', accessToken, {
         httpOnly: true,
@@ -200,25 +197,852 @@ export const authController = {
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
 
-      const { password: _, ...userSafe } = user;
       res.json({
         success: true,
         message: 'Login successful.',
-        user: userSafe,
+        user: user.toJSON(),
         accessToken,
         refreshToken,
       });
     } catch (error: any) {
       console.error('Login error:', error);
-      res.status(500).json({
-        success: false,
-        message: 'Internal server error during login.',
-      });
+      res.status(500).json({ success: false, message: 'Error during login.' });
     }
   },
 
+  // POST /api/auth/civic/login
+  civicLogin: async (req: Request, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const validation = loginSchema.safeParse(req.body);
+      if (!validation.success) {
+        res.status(400).json({
+          success: false,
+          errors: validation.error.errors.map((e) => e.message),
+        });
+        return;
+      }
+
+      const { identifier, password } = validation.data;
+      const normalized = identifier.toLowerCase().trim();
+
+      const user = await User.findOne({
+        $or: [{ email: normalized }, { phone: identifier.trim() }, { username: normalized }],
+      }).select('+password');
+
+      if (!user) {
+        res.status(401).json({ success: false, message: 'No Civic account found with these credentials.' });
+        return;
+      }
+
+      if (user.role !== 'CITIZEN') {
+        res.status(403).json({
+          success: false,
+          message: 'This portal is strictly for Citizens / Civic users. Officers and Controllers must use their dedicated portals.',
+        });
+        return;
+      }
+
+      const isMatch = await bcrypt.compare(password, user.password || '');
+      if (!isMatch) {
+        res.status(401).json({ success: false, message: 'Invalid credentials. Password incorrect.' });
+        return;
+      }
+
+      if (user.isBanned || user.accountStatus === 'SUSPENDED') {
+        res.status(403).json({ success: false, message: 'Your account is suspended.' });
+        return;
+      }
+
+      // Update presence
+      user.isOnline = true;
+      user.presenceStatus = 'ONLINE';
+      user.lastLoginAt = new Date();
+      user.lastSeenAt = new Date();
+      user.successfulLoginCount = (user.successfulLoginCount || 0) + 1;
+      await user.save();
+
+      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
+      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
+
+      res.json({
+        success: true,
+        message: 'Civic login successful.',
+        user: user.toJSON(),
+        accessToken,
+        refreshToken,
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Error during civic login.' });
+    }
+  },
+
+  // POST /api/auth/civic/google (Stable permanent identity)
+  civicGoogleLogin: async (req: Request, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const { credential, idToken } = req.body;
+      const token = credential || idToken;
+      if (!token) {
+        res.status(400).json({ success: false, message: 'Google OAuth credential / ID token is required.' });
+        return;
+      }
+
+      // Cryptographically verify Google token
+      const googleUser = await authProviderService.verifyGoogleToken(token);
+      const email = googleUser.email.toLowerCase().trim();
+      const stableAuthId = googleUser.googleId;
+
+      // 1. Stable lookup: Find existing MongoDB User by stable authProviderUserId OR verified email
+      let user = await User.findOne({
+        $or: [{ authProviderUserId: stableAuthId }, { email }],
+      });
+
+      if (user && user.role !== 'CITIZEN') {
+        res.status(403).json({
+          success: false,
+          message: 'This Google account is registered under an administrative or officer role. Use the official officer/controller portal.',
+        });
+        return;
+      }
+
+      if (user) {
+        // Account exists! REUSE the same permanent user and update session/presence
+        user.authProviderUserId = stableAuthId; // Ensure stable ID is linked
+        user.isOnline = true;
+        user.presenceStatus = 'ONLINE';
+        user.lastLoginAt = new Date();
+        user.lastSeenAt = new Date();
+        user.successfulLoginCount = (user.successfulLoginCount || 0) + 1;
+        if (googleUser.avatarUrl && !user.avatarUrl) {
+          user.avatarUrl = googleUser.avatarUrl;
+        }
+        await user.save();
+        console.log(`[AUTH-GOOGLE] Reused existing permanent account: ${user.email} (${user.accountNumber})`);
+      } else {
+        // First login: CREATE ONE permanent MongoDB User record
+        const accountNumber = await getNextAccountNumber();
+        const baseUsername = (googleUser.name || email.split('@')[0])
+          .toLowerCase()
+          .replace(/[^a-z0-9]/g, '_')
+          .substring(0, 15);
+        const username = `${baseUsername}_${Math.floor(100 + Math.random() * 900)}`;
+
+        user = await User.create({
+          accountNumber,
+          authProviderUserId: stableAuthId,
+          username,
+          name: googleUser.name || 'Civic Resident',
+          email,
+          phone: `+91${Math.floor(6000000000 + Math.random() * 3999999999)}`,
+          role: 'CITIZEN',
+          location: 'Chennai, Tamil Nadu',
+          avatarUrl: googleUser.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
+          presenceStatus: 'ONLINE',
+          isOnline: true,
+          accountStatus: 'ACTIVE',
+          lastLoginAt: new Date(),
+          lastSeenAt: new Date(),
+          successfulLoginCount: 1,
+        });
+        console.log(`[AUTH-GOOGLE] Created ONE permanent MongoDB account: ${user.email} (${user.accountNumber})`);
+      }
+
+      if (user.isBanned || user.accountStatus === 'SUSPENDED') {
+        res.status(403).json({ success: false, message: 'Account is currently suspended.' });
+        return;
+      }
+
+      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
+      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
+
+      res.cookie('accessToken', accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 15 * 60 * 1000,
+      });
+
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      res.json({
+        success: true,
+        message: 'Google authentication verified successfully.',
+        user: user.toJSON(),
+        accessToken,
+        refreshToken,
+      });
+    } catch (error: any) {
+      console.error('[GOOGLE-AUTH] Civic Google verification error:', error.message);
+      res.status(401).json({ success: false, message: error.message || 'Google authentication error.' });
+    }
+  },
+
+  // POST /api/auth/civic/mobile/send-otp
+  civicSendOtp: async (req: Request, res: Response): Promise<void> => {
+    try {
+      const { phone } = req.body;
+      if (!phone || !/^\+?91?[6-9]\d{9}$/.test(phone)) {
+        res.status(400).json({ success: false, message: 'Please provide a valid Indian mobile number (+91).' });
+        return;
+      }
+
+      const cleanPhone = phone.startsWith('+91') ? phone : `+91${phone.replace(/\D/g, '').slice(-10)}`;
+      const result = await authProviderService.sendSmsOtp(cleanPhone);
+
+      res.json({
+        success: true,
+        message: result.message || `Verification code dispatched via real SMS to ${cleanPhone}.`,
+      });
+    } catch (error: any) {
+      console.error('[SMS-OTP] Send OTP failure:', error.message);
+      res.status(500).json({ success: false, message: error.message || 'Failed to dispatch real SMS OTP.' });
+    }
+  },
+
+  // POST /api/auth/civic/mobile/verify-otp (Stable permanent identity)
+  civicVerifyOtp: async (req: Request, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const { phone, otp, name, location } = req.body;
+      if (!phone || !otp) {
+        res.status(400).json({ success: false, message: 'Phone and OTP are required.' });
+        return;
+      }
+
+      const cleanPhone = phone.startsWith('+91') ? phone : `+91${phone.replace(/\D/g, '').slice(-10)}`;
+      await authProviderService.verifySmsOtp(cleanPhone, otp);
+
+      // Stable lookup: Find existing MongoDB user by authProviderUserId (phone) OR phone number
+      let user = await User.findOne({
+        $or: [{ authProviderUserId: cleanPhone }, { phone: cleanPhone }],
+      });
+
+      if (user && user.role !== 'CITIZEN') {
+        res.status(403).json({
+          success: false,
+          message: 'This mobile number is registered under an Officer/Controller account. Please use the official portal.',
+        });
+        return;
+      }
+
+      if (user) {
+        // Reuse existing MongoDB account!
+        user.authProviderUserId = cleanPhone;
+        user.isOnline = true;
+        user.presenceStatus = 'ONLINE';
+        user.lastLoginAt = new Date();
+        user.lastSeenAt = new Date();
+        user.successfulLoginCount = (user.successfulLoginCount || 0) + 1;
+        await user.save();
+        console.log(`[AUTH-OTP] Reused existing permanent account: ${user.phone} (${user.accountNumber})`);
+      } else {
+        // First login: CREATE ONE permanent MongoDB User record
+        const accountNumber = await getNextAccountNumber();
+        const randomDigits = cleanPhone.slice(-4);
+        const username = `citizen_${randomDigits}_${Math.floor(100 + Math.random() * 900)}`;
+
+        user = await User.create({
+          accountNumber,
+          authProviderUserId: cleanPhone,
+          username,
+          name: name || `Resident ${randomDigits}`,
+          email: `citizen_${randomDigits}@tn.gov.in.demo`,
+          phone: cleanPhone,
+          role: 'CITIZEN',
+          location: location || 'Chennai, Tamil Nadu',
+          avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
+          presenceStatus: 'ONLINE',
+          isOnline: true,
+          accountStatus: 'ACTIVE',
+          lastLoginAt: new Date(),
+          lastSeenAt: new Date(),
+          successfulLoginCount: 1,
+        });
+        console.log(`[AUTH-OTP] Created ONE permanent MongoDB account: ${user.phone} (${user.accountNumber})`);
+      }
+
+      if (user.isBanned || user.accountStatus === 'SUSPENDED') {
+        res.status(403).json({ success: false, message: 'Account is currently suspended.' });
+        return;
+      }
+
+      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
+      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
+
+      res.cookie('accessToken', accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 15 * 60 * 1000,
+      });
+
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      res.json({
+        success: true,
+        message: 'Mobile SMS verification verified successfully.',
+        user: user.toJSON(),
+        accessToken,
+        refreshToken,
+      });
+    } catch (error: any) {
+      console.error('[SMS-OTP] Verify OTP failure:', error.message);
+      res.status(400).json({ success: false, message: error.message || 'OTP verification failed.' });
+    }
+  },
+
+  // POST /api/auth/controller/login
+  controllerLogin: async (req: Request, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const identifier = req.body.identifier || req.body.email;
+      const { password } = req.body;
+      if (!identifier || !password) {
+        res.status(400).json({ success: false, message: 'Controller email/ID and password are required.' });
+        return;
+      }
+
+      const normalizedIdentifier = identifier.trim().toLowerCase();
+
+      // Enforce the designated State Controller accounts
+      const isAllowedController =
+        normalizedIdentifier === 'nowfal@gmail.com' ||
+        normalizedIdentifier === 'nowfal' ||
+        normalizedIdentifier === 'admin@civicplus.tn.gov.in';
+
+      if (!isAllowedController) {
+        res.status(403).json({
+          success: false,
+          message: 'Access denied. Only the designated State Controller account (nowfal@gmail.com) can access this portal.',
+        });
+        return;
+      }
+
+      const user = await User.findOne({
+        $or: [{ email: normalizedIdentifier }, { username: normalizedIdentifier }],
+        role: 'ADMIN',
+      }).select('+password');
+
+      if (!user) {
+        res.status(401).json({ success: false, message: 'Access denied. Controller account not found.' });
+        return;
+      }
+
+      const isMatch = await bcrypt.compare(password, user.password || '');
+      if (!isMatch) {
+        res.status(401).json({ success: false, message: 'Access denied. Invalid Controller password.' });
+        return;
+      }
+
+      user.isOnline = true;
+      user.presenceStatus = 'ONLINE';
+      user.lastLoginAt = new Date();
+      user.lastSeenAt = new Date();
+      user.successfulLoginCount = (user.successfulLoginCount || 0) + 1;
+      await user.save();
+
+      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
+      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
+
+      res.cookie('accessToken', accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 15 * 60 * 1000,
+      });
+
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
+      res.json({
+        success: true,
+        message: 'Controller authentication verified. Welcome, Chief Civic Controller.',
+        user: user.toJSON(),
+        accessToken,
+        refreshToken,
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Controller login error.' });
+    }
+  },
+
+  // POST /api/auth/officer/request-access
+  officerRequestAccess: async (req: Request, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const { name, email, phone, department, designation, governmentIdProof, idProofType, reason } = req.body;
+
+      if (!name || !email || !phone || !department || !designation) {
+        res.status(400).json({
+          success: false,
+          message: 'All fields including official Name, Email, Phone, Department, and Designation are mandatory.',
+        });
+        return;
+      }
+
+      const normalizedEmail = email.toLowerCase().trim();
+
+      // Check existing Officer account
+      const existingOfficer = await User.findOne({ email: normalizedEmail, role: 'OFFICER' });
+      if (existingOfficer) {
+        if (existingOfficer.approvalStatus === 'APPROVED' && existingOfficer.isApproved) {
+          res.status(400).json({
+            success: false,
+            message: 'An active approved officer account with this email already exists. Please log in directly.',
+          });
+          return;
+        } else {
+          res.status(400).json({
+            success: false,
+            message: 'An access application for this official email is already pending Controller review.',
+          });
+          return;
+        }
+      }
+
+      // Check existing OfficerRequest document
+      const existingReq = await OfficerRequest.findOne({ email: normalizedEmail, status: 'PENDING' });
+      if (existingReq) {
+        res.status(400).json({
+          success: false,
+          message: 'An access application for this official email is already pending Controller review.',
+        });
+        return;
+      }
+
+      const accountNumber = await getNextAccountNumber();
+      const dummyHashedPassword = await bcrypt.hash(`OfficerInit@${Date.now()}`, 10);
+      const username =
+        name.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 14) +
+        '_' +
+        Math.floor(100 + Math.random() * 900);
+
+      // Create permanent User record in PENDING state
+      const createdUser = await User.create({
+        accountNumber,
+        username,
+        name,
+        email: normalizedEmail,
+        phone,
+        password: dummyHashedPassword,
+        role: 'OFFICER',
+        department,
+        designation,
+        governmentIdProof: governmentIdProof || 'TN-OFFICER-VERIFIED',
+        idProofType: idProofType || 'TN_CIVIC_BADGE',
+        requestReason: reason || 'Departmental roster verification',
+        location: 'Tamil Nadu',
+        approvalStatus: 'PENDING',
+        isApproved: false,
+        accountStatus: 'PENDING_APPROVAL',
+        presenceStatus: 'OFFLINE',
+        isOnline: false,
+        needsPasswordChange: true,
+      });
+
+      // Also record in OfficerRequest collection
+      await OfficerRequest.create({
+        applicantId: createdUser._id,
+        name,
+        email: normalizedEmail,
+        phone,
+        department,
+        designation,
+        district: 'Tamil Nadu',
+        governmentIdProof: governmentIdProof || 'TN-OFFICER-VERIFIED',
+        idProofType: idProofType || 'TN_CIVIC_BADGE',
+        reason: reason || 'Departmental roster verification',
+        status: 'PENDING',
+      });
+
+      console.log(`[OFFICER-REQUEST] Created Officer request for ${normalizedEmail} (${accountNumber})`);
+
+      res.status(201).json({
+        success: true,
+        message: 'Officer access request submitted successfully. It is now awaiting Controller review and activation.',
+        officer: createdUser.toJSON(),
+      });
+    } catch (error: any) {
+      console.error('officerRequestAccess error:', error);
+      res.status(500).json({ success: false, message: 'Error submitting officer access request.' });
+    }
+  },
+
+  // POST /api/auth/officer/login
+  officerLogin: async (req: Request, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const { email, password } = req.body;
+      if (!email || !password) {
+        res.status(400).json({ success: false, message: 'Approved officer email and password are required.' });
+        return;
+      }
+
+      const normalizedEmail = email.toLowerCase().trim();
+      const user = await User.findOne({ email: normalizedEmail, role: 'OFFICER' }).select('+password');
+
+      if (!user) {
+        res.status(401).json({
+          success: false,
+          message: 'Officer account not found. If you are a departmental officer, please submit an Access Request first.',
+        });
+        return;
+      }
+
+      // Check Controller approval status
+      const isApproved = user.approvalStatus === 'APPROVED' && user.isApproved === true && !user.isBanned;
+      if (!isApproved) {
+        res.status(403).json({
+          success: false,
+          message: 'Your Officer account has not been approved by the Controller yet.',
+          isPending: true,
+          approvalStatus: user.approvalStatus || 'PENDING',
+        });
+        return;
+      }
+
+      if (user.accountStatus === 'SUSPENDED' || user.isBanned) {
+        res.status(403).json({ success: false, message: 'Your Officer account is currently suspended.' });
+        return;
+      }
+
+      const isMatch = await bcrypt.compare(password, user.password || '');
+      if (!isMatch) {
+        res.status(401).json({ success: false, message: 'Invalid credentials. Password incorrect.' });
+        return;
+      }
+
+      // Update presence
+      user.isOnline = true;
+      user.presenceStatus = 'ONLINE';
+      user.lastLoginAt = new Date();
+      user.lastSeenAt = new Date();
+      user.successfulLoginCount = (user.successfulLoginCount || 0) + 1;
+      await user.save();
+
+      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
+      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
+
+      res.json({
+        success: true,
+        message: 'Officer login successful.',
+        user: user.toJSON(),
+        needsPasswordChange: user.needsPasswordChange,
+        accessToken,
+        refreshToken,
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Error during officer login.' });
+    }
+  },
+
+  // POST /api/auth/officer/google
+  officerGoogleLogin: async (req: Request, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const { credential, idToken } = req.body;
+      const token = credential || idToken;
+      if (!token) {
+        res.status(400).json({ success: false, message: 'Google OAuth credential / ID token is required.' });
+        return;
+      }
+
+      const googleUser = await authProviderService.verifyGoogleToken(token);
+      const email = googleUser.email.toLowerCase().trim();
+
+      const user = await User.findOne({ email, role: 'OFFICER' });
+      if (!user) {
+        res.status(403).json({
+          success: false,
+          message: `Access denied. The Google account (${email}) is not registered as an authorized departmental Officer.`,
+        });
+        return;
+      }
+
+      const isApproved = user.approvalStatus === 'APPROVED' && user.isApproved === true && !user.isBanned;
+      if (!isApproved) {
+        res.status(403).json({
+          success: false,
+          message: 'Your Officer account has not been approved by the Controller yet.',
+          isPending: true,
+          approvalStatus: user.approvalStatus || 'PENDING',
+        });
+        return;
+      }
+
+      user.authProviderUserId = googleUser.googleId;
+      user.isOnline = true;
+      user.presenceStatus = 'ONLINE';
+      user.lastLoginAt = new Date();
+      user.lastSeenAt = new Date();
+      user.successfulLoginCount = (user.successfulLoginCount || 0) + 1;
+      await user.save();
+
+      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
+      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
+
+      res.json({
+        success: true,
+        message: 'Officer authenticated via Google OAuth successfully.',
+        user: user.toJSON(),
+        needsPasswordChange: false,
+        accessToken,
+        refreshToken,
+      });
+    } catch (error: any) {
+      res.status(401).json({ success: false, message: error.message || 'Google OAuth verification failed.' });
+    }
+  },
+
+  // POST /api/auth/officer/set-password
+  officerSetPassword: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      if (!req.user || req.user.role !== 'OFFICER') {
+        res.status(403).json({ success: false, message: 'Only authorized officers can perform this password setup.' });
+        return;
+      }
+
+      const { currentPassword, newPassword } = req.body;
+      if (!newPassword || newPassword.length < 8) {
+        res.status(400).json({ success: false, message: 'New permanent password must be at least 8 characters long.' });
+        return;
+      }
+
+      const user = await User.findById(req.user.id).select('+password');
+      if (!user) {
+        res.status(404).json({ success: false, message: 'Officer profile not found.' });
+        return;
+      }
+
+      if (currentPassword && user.password) {
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) {
+          res.status(400).json({ success: false, message: 'Current temporary password verification failed.' });
+          return;
+        }
+      }
+
+      user.password = await bcrypt.hash(newPassword, 10);
+      user.needsPasswordChange = false;
+      await user.save();
+
+      res.json({
+        success: true,
+        message: 'Permanent password has been configured successfully. Full officer dashboard access enabled.',
+        user: user.toJSON(),
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Error setting new permanent password.' });
+    }
+  },
+
+  // POST /api/auth/employee/login (Dedicated employee authentication)
+  employeeLogin: async (req: Request, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const { identifier, password } = req.body;
+      if (!identifier || !password) {
+        res.status(400).json({ success: false, message: 'Employee Email/ID and password are required.' });
+        return;
+      }
+
+      const normalized = identifier.toLowerCase().trim();
+
+      // Find employee by email or employeeId
+      const empRecord = await Employee.findOne({
+        $or: [{ email: normalized }, { employeeId: identifier.trim().toUpperCase() }],
+      });
+
+      if (!empRecord) {
+        res.status(401).json({ success: false, message: 'Employee account not found.' });
+        return;
+      }
+
+      if (empRecord.accountStatus === 'DISABLED') {
+        res.status(403).json({ success: false, message: 'Employee account has been deactivated.' });
+        return;
+      }
+
+      const user = await User.findById(empRecord.userId).select('+password');
+      if (!user) {
+        res.status(401).json({ success: false, message: 'Employee user credentials not found.' });
+        return;
+      }
+
+      const isMatch = await bcrypt.compare(password, user.password || '');
+      if (!isMatch) {
+        res.status(401).json({ success: false, message: 'Invalid employee password.' });
+        return;
+      }
+
+      user.isOnline = true;
+      user.presenceStatus = 'ONLINE';
+      user.lastLoginAt = new Date();
+      user.lastSeenAt = new Date();
+      user.successfulLoginCount = (user.successfulLoginCount || 0) + 1;
+      await user.save();
+
+      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: 'EMPLOYEE' });
+      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: 'EMPLOYEE' });
+
+      res.json({
+        success: true,
+        message: 'Employee authenticated successfully.',
+        user: {
+          ...user.toJSON(),
+          employeeProfile: empRecord.toJSON(),
+        },
+        accessToken,
+        refreshToken,
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Error during employee login.' });
+    }
+  },
+
+  // POST /api/auth/logout (Never deletes account - updates presence to OFFLINE)
+  logout: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      let userId = req.user?.id;
+
+      if (!userId) {
+        // Try decoding token from headers/cookies
+        let token: string | undefined;
+        if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+          token = req.headers.authorization.split(' ')[1];
+        } else if (req.cookies && req.cookies.accessToken) {
+          token = req.cookies.accessToken;
+        }
+
+        if (token) {
+          try {
+            const decoded = verifyAccessToken(token);
+            userId = decoded.userId;
+          } catch {
+            try {
+              const decoded = verifyRefreshToken(token);
+              userId = decoded.userId;
+            } catch {}
+          }
+        }
+      }
+
+      if (userId) {
+        // Mark presence as OFFLINE in MongoDB. Account is PERMANENT and preserved!
+        await User.findByIdAndUpdate(userId, {
+          presenceStatus: 'OFFLINE',
+          isOnline: false,
+          lastSeenAt: new Date(),
+        });
+      }
+
+      res.clearCookie('accessToken');
+      res.clearCookie('refreshToken');
+      res.json({ success: true, message: 'Logged out successfully. Account status set to OFFLINE.' });
+    } catch (error: any) {
+      res.clearCookie('accessToken');
+      res.clearCookie('refreshToken');
+      res.json({ success: true, message: 'Logged out.' });
+    }
+  },
+
+  // DELETE /api/auth/account (Explicit user self-deletion flow only)
+  deleteAccount: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      if (!req.user) {
+        res.status(401).json({ success: false, message: 'Authentication required.' });
+        return;
+      }
+
+      // Explicit authorized user account removal
+      await User.findByIdAndDelete(req.user.id);
+      await Employee.findOneAndDelete({ userId: req.user.id });
+
+      res.clearCookie('accessToken');
+      res.clearCookie('refreshToken');
+      res.json({
+        success: true,
+        message: 'Your account has been permanently deleted upon your explicit request.',
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Failed to delete account.' });
+    }
+  },
+
+  // GET /api/auth/me
+  getMe: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    if (!req.user) {
+      res.status(401).json({ success: false, message: 'Please log in to continue.' });
+      return;
+    }
+
+    let employeeProfile = null;
+    if (req.user.role === 'EMPLOYEE') {
+      employeeProfile = await Employee.findOne({ userId: req.user._id });
+    }
+
+    res.json({
+      success: true,
+      user: {
+        ...req.user.toJSON(),
+        employeeProfile: employeeProfile ? employeeProfile.toJSON() : null,
+      },
+    });
+  },
+
+  // PUT /api/auth/me
+  updateMe: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      if (!req.user) {
+        res.status(401).json({ success: false, message: 'Not authenticated.' });
+        return;
+      }
+
+      const { location, avatarUrl, phone, name } = req.body;
+      const updated = await User.findByIdAndUpdate(
+        req.user.id,
+        {
+          ...(location ? { location } : {}),
+          ...(avatarUrl ? { avatarUrl } : {}),
+          ...(phone ? { phone } : {}),
+          ...(name ? { name } : {}),
+        },
+        { new: true }
+      );
+
+      res.json({
+        success: true,
+        message: 'Profile updated successfully.',
+        user: updated?.toJSON(),
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Error updating profile.' });
+    }
+  },
+
+  // POST /api/auth/refresh
   refresh: async (req: Request, res: Response): Promise<void> => {
     try {
+      await connectDb();
       const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
       if (!refreshToken) {
         res.status(401).json({ success: false, message: 'Refresh token required.' });
@@ -226,9 +1050,9 @@ export const authController = {
       }
 
       const decoded = verifyRefreshToken(refreshToken);
-      const user = inMemoryDb.findUserById(decoded.userId);
+      const user = await User.findById(decoded.userId);
 
-      if (!user || user.isBanned) {
+      if (!user || user.isBanned || user.accountStatus === 'SUSPENDED') {
         res.status(403).json({ success: false, message: 'Session expired or user barred.' });
         return;
       }
@@ -255,794 +1079,58 @@ export const authController = {
     }
   },
 
-  logout: async (_req: Request, res: Response): Promise<void> => {
-    res.clearCookie('accessToken');
-    res.clearCookie('refreshToken');
-    res.json({ success: true, message: 'Logged out successfully.' });
-  },
-
-  getMe: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    if (!req.user) {
-      res.status(401).json({ success: false, message: 'Please log in to continue.' });
-      return;
-    }
-    const { password: _, ...userSafe } = req.user;
-    const isApproved =
-      req.user.role !== 'OFFICER' ||
-      (req.user.approvalStatus === 'APPROVED' && !req.user.isBanned) ||
-      (!req.user.isBanned && req.user.approvalStatus !== 'PENDING' && req.user.approvalStatus !== 'REJECTED');
-
-    res.json({
-      success: true,
-      user: {
-        ...userSafe,
-        approvalStatus: req.user.approvalStatus || (req.user.role === 'OFFICER' ? (req.user.isBanned ? 'PENDING' : 'APPROVED') : 'APPROVED'),
-        isApproved,
-        needsPasswordChange: req.user.needsPasswordChange || false,
-      },
-    });
-  },
-
-  updateMe: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    try {
-      if (!req.user) {
-        res.status(401).json({ success: false, message: 'Not authenticated.' });
-        return;
-      }
-
-      const { location, avatarUrl, phone } = req.body;
-      const updated = inMemoryDb.updateUser(req.user.id, {
-        ...(location ? { location } : {}),
-        ...(avatarUrl ? { avatarUrl } : {}),
-        ...(phone ? { phone } : {}),
-      });
-
-      if (!updated) {
-        res.status(404).json({ success: false, message: 'User not found.' });
-        return;
-      }
-
-      const { password: _, ...userSafe } = updated;
-      res.json({
-        success: true,
-        message: 'Profile updated successfully.',
-        user: userSafe,
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Error updating profile.' });
-    }
-  },
-
-  // -------------------------------------------------------------
-  // CIVIC AUTHENTICATION (Normal access, no approval required)
-  // -------------------------------------------------------------
-  civicLogin: async (req: Request, res: Response): Promise<void> => {
-    try {
-      const validation = loginSchema.safeParse(req.body);
-      if (!validation.success) {
-        res.status(400).json({
-          success: false,
-          errors: validation.error.errors.map((e) => e.message),
-        });
-        return;
-      }
-
-      const { identifier, password } = validation.data;
-      const user = inMemoryDb.findUserByEmailOrPhone(identifier);
-
-      if (!user) {
-        res.status(401).json({ success: false, message: 'No Civic account found with these credentials.' });
-        return;
-      }
-
-      if (user.role !== 'CITIZEN') {
-        res.status(403).json({
-          success: false,
-          message: 'This portal is strictly for Citizens / Civic users. Officers and Controllers must use their dedicated portals.',
-        });
-        return;
-      }
-
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        res.status(401).json({ success: false, message: 'Invalid credentials. Password incorrect.' });
-        return;
-      }
-
-      if (user.isBanned) {
-        res.status(403).json({
-          success: false,
-          message: 'Your account is currently suspended due to repeated false/fraudulent civic reports.',
-        });
-        return;
-      }
-
-      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
-      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
-
-      const { password: _, ...userSafe } = user;
-      res.json({
-        success: true,
-        message: 'Civic login successful.',
-        user: userSafe,
-        accessToken,
-        refreshToken,
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Error during civic login.' });
-    }
-  },
-
-  civicGoogleLogin: async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { credential, idToken } = req.body;
-      const token = credential || idToken;
-      if (!token) {
-        res.status(400).json({ success: false, message: 'Google OAuth credential / ID token is required.' });
-        return;
-      }
-
-      // Synchronize latest database state across devices
-      await inMemoryDb.ensureSynced();
-
-      // Cryptographically verify token with official Google Identity Service
-      const googleUser = await authProviderService.verifyGoogleToken(token);
-      const email = googleUser.email.toLowerCase().trim();
-
-      // Unique identity lookup: check authProviderUserId first, then normalized verified email
-      let user = inMemoryDb.findUserByAuthProviderId(googleUser.googleId) || inMemoryDb.findUserByEmailOrPhone(email);
-
-      if (user && user.role !== 'CITIZEN') {
-        res.status(403).json({
-          success: false,
-          message: 'This Google account is registered under an administrative or officer role. Use the official officer/controller portal.',
-        });
-        return;
-      }
-
-      if (!user) {
-        const generatedUsername = (googleUser.name || email.split('@')[0])
-          .toLowerCase()
-          .replace(/[^a-z0-9]/g, '_')
-          .substring(0, 15) + '_' + Math.floor(100 + Math.random() * 900);
-        const dummyPassword = await bcrypt.hash(`google-auth-${Date.now()}`, 10);
-
-        user = inMemoryDb.createUser({
-          username: generatedUsername,
-          name: googleUser.name || 'Civic Resident',
-          email,
-          phone: `+91${Math.floor(6000000000 + Math.random() * 3999999999)}`,
-          authProviderUserId: googleUser.googleId,
-          password: dummyPassword,
-          role: 'CITIZEN',
-          location: 'Chennai, Tamil Nadu',
-          avatarUrl: googleUser.avatarUrl || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
-        });
-        await inMemoryDb.persistAsync();
-      } else if (!user.authProviderUserId) {
-        // Link immutable Google ID if previously registered
-        user = inMemoryDb.updateUser(user.id, {
-          authProviderUserId: googleUser.googleId,
-          avatarUrl: user.avatarUrl || googleUser.avatarUrl,
-        }) || user;
-        await inMemoryDb.persistAsync();
-      }
-
-      if (user.isBanned) {
-        res.status(403).json({ success: false, message: 'Account is currently suspended.' });
-        return;
-      }
-
-      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
-      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
-
-      const { password: _, ...userSafe } = user;
-      res.json({
-        success: true,
-        message: 'Google authentication verified successfully.',
-        user: userSafe,
-        accessToken,
-        refreshToken,
-      });
-    } catch (error: any) {
-      console.error('[GOOGLE-AUTH] Civic Google verification error:', error.message);
-      res.status(401).json({ success: false, message: error.message || 'Google authentication error.' });
-    }
-  },
-
-  civicSendOtp: async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { phone } = req.body;
-      if (!phone || !/^\+?91?[6-9]\d{9}$/.test(phone)) {
-        res.status(400).json({ success: false, message: 'Please provide a valid Indian mobile number (+91).' });
-        return;
-      }
-
-      const cleanPhone = phone.startsWith('+91') ? phone : `+91${phone.replace(/\D/g, '').slice(-10)}`;
-      const result = await authProviderService.sendSmsOtp(cleanPhone);
-
-      res.json({
-        success: true,
-        message: result.message || `Verification code dispatched via real SMS to ${cleanPhone}.`,
-      });
-    } catch (error: any) {
-      console.error('[SMS-OTP] Send OTP failure:', error.message);
-      res.status(500).json({ success: false, message: error.message || 'Failed to dispatch real SMS OTP.' });
-    }
-  },
-
-  civicVerifyOtp: async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { phone, otp, name, location } = req.body;
-      if (!phone || !otp) {
-        res.status(400).json({ success: false, message: 'Phone and OTP are required.' });
-        return;
-      }
-
-      const cleanPhone = phone.startsWith('+91') ? phone : `+91${phone.replace(/\D/g, '').slice(-10)}`;
-
-      // Cryptographically verify real SMS OTP with SMS provider
-      await authProviderService.verifySmsOtp(cleanPhone, otp);
-
-      // Ensure database state is synchronized across instances
-      await inMemoryDb.ensureSynced();
-
-      let user = inMemoryDb.findUserByAuthProviderId(cleanPhone) || inMemoryDb.findUserByEmailOrPhone(cleanPhone);
-
-      if (user && user.role !== 'CITIZEN') {
-        res.status(403).json({
-          success: false,
-          message: 'This mobile number is registered as an Officer/Controller account. Please use the official portal.',
-        });
-        return;
-      }
-
-      if (!user) {
-        const dummyPassword = await bcrypt.hash(`otp-auth-${Date.now()}`, 10);
-        const randomDigits = cleanPhone.slice(-4);
-        user = inMemoryDb.createUser({
-          username: `citizen_${randomDigits}`,
-          name: name || `Resident ${randomDigits}`,
-          email: `citizen_${randomDigits}@tn.gov.in.demo`,
-          phone: cleanPhone,
-          authProviderUserId: cleanPhone,
-          password: dummyPassword,
-          role: 'CITIZEN',
-          location: location || 'Chennai, Tamil Nadu',
-          avatarUrl: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150',
-        });
-        await inMemoryDb.persistAsync();
-      }
-
-      if (user.isBanned) {
-        res.status(403).json({ success: false, message: 'Account is currently suspended.' });
-        return;
-      }
-
-      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
-      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
-
-      const { password: _, ...userSafe } = user;
-      res.json({
-        success: true,
-        message: 'Mobile SMS verification verified successfully.',
-        user: userSafe,
-        accessToken,
-        refreshToken,
-      });
-    } catch (error: any) {
-      console.error('[SMS-OTP] Verify OTP failure:', error.message);
-      res.status(400).json({ success: false, message: error.message || 'OTP verification failed.' });
-    }
-  },
-
-  // -------------------------------------------------------------
-  // CONTROLLER AUTHENTICATION (Exclusively: nowfal@gmail.com / Admin@123)
-  // -------------------------------------------------------------
-  controllerLogin: async (req: Request, res: Response): Promise<void> => {
-    try {
-      const identifier = req.body.identifier || req.body.email;
-      const { password } = req.body;
-      if (!identifier || !password) {
-        res.status(400).json({ success: false, message: 'Controller email/ID and password are required.' });
-        return;
-      }
-
-
-      const normalizedIdentifier = identifier.trim().toLowerCase();
-
-      // Enforce the single exclusive Controller identity: nowfal@gmail.com
-      if (normalizedIdentifier !== 'nowfal@gmail.com' && normalizedIdentifier !== 'nowfal') {
-        res.status(403).json({
-          success: false,
-          message: 'Access denied. Only the designated State Controller account (nowfal@gmail.com) can access this portal.',
-        });
-        return;
-      }
-
-      const user = inMemoryDb.findUserByEmailOrPhone(normalizedIdentifier);
-      if (!user) {
-        res.status(401).json({ success: false, message: 'Access denied. Controller account not found.' });
-        return;
-      }
-
-      // Must be role ADMIN and specifically the Controller
-      if (user.role !== 'ADMIN' || user.email.toLowerCase() !== 'nowfal@gmail.com') {
-        res.status(403).json({
-          success: false,
-          message: 'Access denied. You do not hold State Controller authority.',
-        });
-        return;
-      }
-
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        res.status(401).json({ success: false, message: 'Access denied. Invalid Controller password.' });
-        return;
-      }
-
-      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
-      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
-
-      const { password: _, ...userSafe } = user;
-      res.json({
-        success: true,
-        message: 'Controller authentication verified. Welcome, Chief Civic Controller Nowfal.',
-        user: userSafe,
-        accessToken,
-        refreshToken,
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Controller login error.' });
-    }
-  },
-
-
-  // -------------------------------------------------------------
-  // OFFICER ACCESS REQUEST & APPROVAL-BASED AUTH
-  // -------------------------------------------------------------
-  // -------------------------------------------------------------
-  // OFFICER ACCESS REQUEST & APPROVAL-BASED AUTH (No new storage)
-  // -------------------------------------------------------------
-  officerRequestAccess: async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { name, email, phone, department, designation, governmentIdProof, idProofType, reason } = req.body;
-
-      if (!name || !email || !phone || !department || !designation) {
-        res.status(400).json({
-          success: false,
-          message: 'All fields including official Name, Email, Phone, Department, and Designation are mandatory.',
-        });
-        return;
-      }
-
-      // Ensure database state is synchronized across instances
-      await inMemoryDb.ensureSynced();
-
-      const normalizedEmail = email.toLowerCase().trim();
-
-      // Check if user already exists in the existing User storage
-      const existingUser = inMemoryDb.users.find((u) => u.email.toLowerCase() === normalizedEmail);
-      if (existingUser) {
-        if (existingUser.role === 'OFFICER') {
-          const isApproved =
-            existingUser.approvalStatus === 'APPROVED' ||
-            (!existingUser.isBanned && existingUser.approvalStatus !== 'PENDING' && existingUser.approvalStatus !== 'REJECTED');
-
-          if (isApproved && !existingUser.isBanned) {
-            res.status(400).json({
-              success: false,
-              message: 'An active approved officer account with this email already exists. Please log in directly.',
-            });
-            return;
-          } else {
-            res.status(400).json({
-              success: false,
-              message: 'An access application for this official email is already pending Controller review.',
-            });
-            return;
-          }
-        } else {
-          // Existing citizen requesting officer upgrade: transition role to OFFICER in PENDING approval state
-          const updated = inMemoryDb.updateUser(existingUser.id, {
-            name,
-            phone,
-            role: 'OFFICER',
-            department,
-            designation,
-            governmentIdProof,
-            idProofType: idProofType || 'TN_CIVIC_BADGE',
-            requestReason: reason,
-            approvalStatus: 'PENDING',
-            isApproved: false,
-            needsPasswordChange: true,
-          });
-          await inMemoryDb.persistAsync();
-
-          const { password: _, ...userSafe } = updated!;
-          res.status(200).json({
-            success: true,
-            message: 'Officer access request submitted successfully. It is now awaiting Controller review and activation.',
-            officer: userSafe,
-            request: userSafe,
-          });
-          return;
-        }
-      }
-
-      const dummyHashedPassword = await bcrypt.hash(`OfficerInit@${Date.now()}`, 10);
-      const username =
-        name.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 14) +
-        '_' +
-        Math.floor(100 + Math.random() * 900);
-
-      // Store unapproved officer in PENDING approval state
-      const createdUser = inMemoryDb.createUser({
-        username,
-        name,
-        email: normalizedEmail,
-        phone,
-        password: dummyHashedPassword,
-        role: 'OFFICER',
-        department,
-        designation,
-        governmentIdProof,
-        idProofType: idProofType || 'TN_CIVIC_BADGE',
-        requestReason: reason,
-        location: 'Tamil Nadu',
-        approvalStatus: 'PENDING',
-        isApproved: false,
-        needsPasswordChange: true,
-        isBanned: false,
-      });
-      await inMemoryDb.persistAsync();
-
-      console.log(`[OFFICER-REGISTRATION] New officer registered in pending state: ${name} (${normalizedEmail}) for ${department}.`);
-
-      const { password: _, ...userSafe } = createdUser;
-      res.status(201).json({
-        success: true,
-        message: 'Officer access request submitted successfully. It is now awaiting Controller review and activation.',
-        officer: userSafe,
-        request: userSafe,
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Error submitting officer access request.' });
-    }
-  },
-
-  officerLogin: async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { email, password } = req.body;
-      if (!email || !password) {
-        res.status(400).json({ success: false, message: 'Approved officer email and password are required.' });
-        return;
-      }
-
-      // Ensure database state is synchronized across instances
-      await inMemoryDb.ensureSynced();
-
-      const normalizedEmail = email.toLowerCase().trim();
-      const user = inMemoryDb.users.find((u) => u.email.toLowerCase() === normalizedEmail);
-
-      // 1. Verify authenticated identity exists and role is OFFICER
-      if (!user || user.role !== 'OFFICER') {
-        res.status(401).json({
-          success: false,
-          message: 'Officer account not found. If you are a departmental officer, please submit an Access Request first.',
-        });
-        return;
-      }
-
-      // 2. Authoritative check: Is this identity an approved Officer? (Requirement 4 & 9)
-      const isApproved =
-        user.approvalStatus === 'APPROVED' ||
-        user.isApproved === true ||
-        (!user.isBanned && user.approvalStatus !== 'PENDING' && user.approvalStatus !== 'REJECTED');
-
-      if (!isApproved) {
-        res.status(403).json({
-          success: false,
-          message: 'Your Officer account has not been approved by the Controller yet.',
-          isPending: true,
-          approvalStatus: user.approvalStatus || 'PENDING',
-        });
-        return;
-      }
-
-      // 3. Verify account is not suspended
-      if (user.isBanned) {
-        res.status(403).json({
-          success: false,
-          message: 'Your Officer account is currently suspended by administration.',
-        });
-        return;
-      }
-
-      // 4. Verify password
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        res.status(401).json({ success: false, message: 'Invalid credentials. Password incorrect.' });
-        return;
-      }
-
-      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
-      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
-
-      const needsPasswordChange = user.needsPasswordChange !== false;
-
-      const { password: _, ...userSafe } = user;
-      res.json({
-        success: true,
-        message: 'Officer login successful.',
-        user: {
-          ...userSafe,
-          approvalStatus: 'APPROVED',
-          isApproved: true,
-          needsPasswordChange,
-        },
-        needsPasswordChange,
-        accessToken,
-        refreshToken,
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Error during officer login.' });
-    }
-  },
-
-  officerGoogleLogin: async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { credential, idToken } = req.body;
-      const token = credential || idToken;
-      if (!token) {
-        res.status(400).json({ success: false, message: 'Google OAuth credential / ID token is required.' });
-        return;
-      }
-
-      // Ensure database state is synchronized across instances
-      await inMemoryDb.ensureSynced();
-
-      // Verify token cryptographically with official Google identity provider
-      const googleUser = await authProviderService.verifyGoogleToken(token);
-      const email = googleUser.email.toLowerCase().trim();
-
-      const user = inMemoryDb.users.find((u) => u.email.toLowerCase() === email);
-      if (!user || user.role !== 'OFFICER') {
-        res.status(403).json({
-          success: false,
-          message: `Access denied. The Google account (${email}) is not registered as an authorized departmental Officer.`,
-        });
-        return;
-      }
-
-      // Authoritative check: Is this identity an approved Officer? (Requirement 4 & 9)
-      const isApproved =
-        user.approvalStatus === 'APPROVED' ||
-        user.isApproved === true ||
-        (!user.isBanned && user.approvalStatus !== 'PENDING' && user.approvalStatus !== 'REJECTED');
-
-      if (!isApproved) {
-        res.status(403).json({
-          success: false,
-          message: 'Your Officer account has not been approved by the Controller yet.',
-          isPending: true,
-          approvalStatus: user.approvalStatus || 'PENDING',
-        });
-        return;
-      }
-
-      if (user.isBanned) {
-        res.status(403).json({
-          success: false,
-          message: `Access denied. Officer account (${email}) is currently suspended.`,
-        });
-        return;
-      }
-
-      const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });
-      const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: user.role });
-
-      const { password: _, ...userSafe } = user;
-      res.json({
-        success: true,
-        message: 'Officer authenticated via Google OAuth successfully.',
-        user: {
-          ...userSafe,
-          approvalStatus: 'APPROVED',
-          isApproved: true,
-          needsPasswordChange: false,
-        },
-        needsPasswordChange: false,
-        accessToken,
-        refreshToken,
-      });
-    } catch (error: any) {
-      console.error('[GOOGLE-AUTH] Officer Google login error:', error.message);
-      res.status(401).json({ success: false, message: error.message || 'Google OAuth verification failed.' });
-    }
-  },
-
-  officerSetPassword: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    try {
-      if (!req.user || req.user.role !== 'OFFICER') {
-        res.status(403).json({ success: false, message: 'Only authorized officers can perform this password setup.' });
-        return;
-      }
-
-      const { currentPassword, newPassword } = req.body;
-      if (!newPassword || newPassword.length < 8) {
-        res.status(400).json({ success: false, message: 'New permanent password must be at least 8 characters long.' });
-        return;
-      }
-
-      const user = inMemoryDb.findUserById(req.user.id);
-      if (!user) {
-        res.status(404).json({ success: false, message: 'Officer profile not found.' });
-        return;
-      }
-
-      // If user currentPassword provided, verify it
-      if (currentPassword) {
-        const isMatch = await bcrypt.compare(currentPassword, user.password);
-        if (!isMatch) {
-          res.status(400).json({ success: false, message: 'Current temporary password verification failed.' });
-          return;
-        }
-      }
-
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
-      const updated = inMemoryDb.updateUser(user.id, {
-        password: hashedPassword,
-        needsPasswordChange: false,
-        approvalStatus: 'APPROVED',
-        isApproved: true,
-      });
-      await inMemoryDb.persistAsync();
-
-      console.log(`[OFFICER-AUTH] Officer ${user.email} successfully updated permanent password.`);
-
-      const { password: _, ...userSafe } = updated!;
-      res.json({
-        success: true,
-        message: 'Permanent password has been configured successfully. Full officer dashboard access enabled.',
-        user: {
-          ...userSafe,
-          approvalStatus: 'APPROVED',
-          isApproved: true,
-          needsPasswordChange: false,
-        },
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Error setting new permanent password.' });
-    }
-  },
-
-  // -------------------------------------------------------------
-  // OFFICER PROFILE UPDATE (Direct reuse of existing User record)
-  // -------------------------------------------------------------
+  // Officer Profile Change Requests
   officerCreateProfileChangeRequest: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await connectDb();
       if (!req.user || req.user.role !== 'OFFICER') {
-        res.status(403).json({ success: false, message: 'Only officers can perform official profile updates.' });
+        res.status(403).json({ success: false, message: 'Only officers can submit profile change requests.' });
         return;
       }
 
-      const officer = inMemoryDb.findUserById(req.user.id);
-      if (!officer) {
-        res.status(404).json({ success: false, message: 'Officer not found.' });
-        return;
-      }
+      const { requestedDepartment, requestedDesignation, requestedLocation, requestedPhone } = req.body;
+      const updated = await User.findByIdAndUpdate(
+        req.user.id,
+        {
+          ...(requestedDepartment ? { department: requestedDepartment } : {}),
+          ...(requestedDesignation ? { designation: requestedDesignation } : {}),
+          ...(requestedLocation ? { location: requestedLocation } : {}),
+          ...(requestedPhone ? { phone: requestedPhone } : {}),
+        },
+        { new: true }
+      );
 
-      const {
-        requestedDepartment,
-        requestedDesignation,
-        requestedLocation,
-        requestedPhone,
-      } = req.body;
-
-      const updated = inMemoryDb.updateUser(officer.id, {
-        ...(requestedDepartment ? { department: requestedDepartment } : {}),
-        ...(requestedDesignation ? { designation: requestedDesignation } : {}),
-        ...(requestedLocation ? { location: requestedLocation } : {}),
-        ...(requestedPhone ? { phone: requestedPhone } : {}),
-      });
-
-      console.log(`[OFFICER-PROFILE-UPDATE] Officer ${officer.email} updated profile attributes in existing User model.`);
-
-      const { password: _, ...userSafe } = updated!;
       res.json({
         success: true,
         message: 'Officer profile updated successfully.',
-        user: userSafe,
+        user: updated?.toJSON(),
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: 'Error updating officer profile.' });
     }
   },
 
-  officerGetProfileChangeRequests: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    try {
-      if (!req.user || req.user.role !== 'OFFICER') {
-        res.status(403).json({ success: false, message: 'Access denied.' });
-        return;
-      }
-
-      res.json({
-        success: true,
-        requests: [],
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Error fetching requests.' });
-    }
+  officerGetProfileChangeRequests: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+    res.json({ success: true, requests: [] });
   },
 
-  getGoogleConfig: async (req: Request, res: Response): Promise<void> => {
-    try {
-      const clientId = process.env.GOOGLE_CLIENT_ID || '';
-      const isPlaceholder = !clientId || clientId.includes('mock') || !clientId.includes('.apps.googleusercontent.com');
-      res.json({
-        success: true,
-        clientId: isPlaceholder ? '' : clientId,
-        isConfigured: !isPlaceholder,
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Failed to retrieve Google config.' });
-    }
+  getGoogleConfig: async (_req: Request, res: Response): Promise<void> => {
+    const clientId = process.env.GOOGLE_CLIENT_ID || '';
+    const isConfigured = Boolean(clientId && clientId.includes('.apps.googleusercontent.com'));
+    res.json({
+      success: true,
+      clientId: isConfigured ? clientId : '',
+      isConfigured,
+    });
   },
 
   saveGoogleClientId: async (req: Request, res: Response): Promise<void> => {
-    try {
-      const { clientId } = req.body;
-      if (!clientId || typeof clientId !== 'string' || !clientId.trim().includes('.apps.googleusercontent.com')) {
-        res.status(400).json({
-          success: false,
-          message: 'Invalid Google Client ID format. It must end with .apps.googleusercontent.com',
-        });
-        return;
-      }
-
-      const cleanId = clientId.trim();
-      process.env.GOOGLE_CLIENT_ID = cleanId;
-
-      // Update backend/.env and frontend/.env on disk
-      try {
-        const fs = await import('fs');
-        const path = await import('path');
-
-        const backendEnvPath = path.resolve(process.cwd(), '.env');
-        if (fs.existsSync(backendEnvPath)) {
-          let content = fs.readFileSync(backendEnvPath, 'utf-8');
-          if (content.includes('GOOGLE_CLIENT_ID=')) {
-            content = content.replace(/GOOGLE_CLIENT_ID=.*/, `GOOGLE_CLIENT_ID="${cleanId}"`);
-          } else {
-            content += `\nGOOGLE_CLIENT_ID="${cleanId}"\n`;
-          }
-          fs.writeFileSync(backendEnvPath, content, 'utf-8');
-        }
-
-        const frontendEnvPath = path.resolve(process.cwd(), '../frontend/.env');
-        if (fs.existsSync(frontendEnvPath)) {
-          let content = fs.readFileSync(frontendEnvPath, 'utf-8');
-          if (content.includes('VITE_GOOGLE_CLIENT_ID=')) {
-            content = content.replace(/VITE_GOOGLE_CLIENT_ID=.*/, `VITE_GOOGLE_CLIENT_ID="${cleanId}"`);
-          } else {
-            content += `\nVITE_GOOGLE_CLIENT_ID="${cleanId}"\n`;
-          }
-          fs.writeFileSync(frontendEnvPath, content, 'utf-8');
-        }
-      } catch (err: any) {
-        console.warn('[CONFIG] Note on saving .env files:', err.message);
-      }
-
-      res.json({
-        success: true,
-        message: 'Real Google Client ID updated successfully.',
-        clientId: cleanId,
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Failed to save Google Client ID.' });
+    const { clientId } = req.body;
+    if (!clientId || !clientId.trim().includes('.apps.googleusercontent.com')) {
+      res.status(400).json({ success: false, message: 'Invalid Google Client ID format.' });
+      return;
     }
+    process.env.GOOGLE_CLIENT_ID = clientId.trim();
+    res.json({ success: true, message: 'Google Client ID saved.', clientId: clientId.trim() });
   },
 };
-
-

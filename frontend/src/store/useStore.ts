@@ -6,7 +6,11 @@ export interface User {
   name?: string;
   email: string;
   phone: string;
-  role: 'CITIZEN' | 'OFFICER' | 'ADMIN';
+  role: 'CITIZEN' | 'OFFICER' | 'ADMIN' | 'EMPLOYEE';
+  accountNumber?: string;
+  presenceStatus?: 'ONLINE' | 'OFFLINE';
+  isOnline?: boolean;
+  loginCount?: number;
   location: string;
   avatarUrl?: string;
   department?: string;
@@ -131,6 +135,18 @@ export const useStore = create<AppState>((set) => {
     },
 
     logout: () => {
+      try {
+        const token = localStorage.getItem('civics_access_token');
+        if (token) {
+          fetch('/api/auth/logout', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+          }).catch(() => {});
+        }
+      } catch (err) {}
       localStorage.removeItem('civics_user');
       localStorage.removeItem('civics_access_token');
       localStorage.removeItem('civics_refresh_token');

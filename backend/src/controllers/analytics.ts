@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
-import { inMemoryDb } from '../lib/prisma';
+import { Complaint } from '../models/Complaint';
+import { User } from '../models/User';
+import { connectDb } from '../lib/db';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { TN_DISTRICTS } from '../data/seedData';
 
@@ -7,36 +9,56 @@ export const analyticsController = {
   // GET /api/analytics/stats
   getStats: async (_req: Request, res: Response): Promise<void> => {
     try {
-      const complaints = inMemoryDb.complaints;
-      const total = complaints.length;
-      const resolved = complaints.filter((c) => c.status === 'RESOLVED').length;
-      const pending = complaints.filter(
-        (c) => c.status === 'SUBMITTED' || c.status === 'ACCEPTED' || c.status === 'ASSIGNED' || c.status === 'IN_PROGRESS'
-      ).length;
-      const rejected = complaints.filter((c) => c.status === 'REJECTED').length;
+      await connectDb();
 
-      const flagged = complaints.filter((c) => c.fraudFlags.length > 0).length;
+      const [
+        total,
+        resolved,
+        pending,
+        rejected,
+        civicUsers,
+        officerUsers,
+        pendingOfficers,
+        bannedUsers,
+        suspiciousAccounts,
+        allComplaints,
+      ] = await Promise.all([
+        Complaint.countDocuments(),
+        Complaint.countDocuments({ status: 'RESOLVED' }),
+        Complaint.countDocuments({
+          status: { $in: ['SUBMITTED', 'ACCEPTED', 'ASSIGNED', 'IN_PROGRESS'] },
+        }),
+        Complaint.countDocuments({ status: 'REJECTED' }),
+        User.countDocuments({ role: 'CITIZEN' }),
+        User.countDocuments({ role: 'OFFICER', isApproved: true }),
+        User.countDocuments({ role: 'OFFICER', approvalStatus: 'PENDING' }),
+        User.countDocuments({ isBanned: true }),
+        User.countDocuments({ fraudScore: { $gt: 40 } }),
+        Complaint.find({}, 'category status location createdAt resolvedAt fraudFlags').lean(),
+      ]);
+
+      const flagged = allComplaints.filter((c) => c.fraudFlags && c.fraudFlags.length > 0).length;
       const fraudRate = total > 0 ? Number(((flagged / total) * 100).toFixed(1)) : 0;
       const resolvedRate = total > 0 ? Number(((resolved / total) * 100).toFixed(1)) : 0;
 
-      // Category breakdown
+      // Category counts
       const categoryCounts: Record<string, number> = {};
-      for (const c of complaints) {
+      for (const c of allComplaints) {
         categoryCounts[c.category] = (categoryCounts[c.category] || 0) + 1;
       }
 
-      // Status breakdown
+      // Status counts
       const statusCounts: Record<string, number> = {};
-      for (const c of complaints) {
+      for (const c of allComplaints) {
         statusCounts[c.status] = (statusCounts[c.status] || 0) + 1;
       }
 
-      // District breakdown
+      // District counts
       const districtCounts: Record<string, { total: number; resolved: number }> = {};
       for (const district of TN_DISTRICTS) {
         districtCounts[district] = { total: 0, resolved: 0 };
       }
-      for (const c of complaints) {
+      for (const c of allComplaints) {
         for (const district of TN_DISTRICTS) {
           if (c.location.includes(district)) {
             districtCounts[district].total++;
@@ -46,22 +68,22 @@ export const analyticsController = {
         }
       }
 
-      // 7-day trend (received vs resolved)
+      // 7-day trend
       const trend7Days: { date: string; received: number; resolved: number }[] = [];
       const now = new Date();
       for (let i = 6; i >= 0; i--) {
         const d = new Date(now.getTime() - i * 86400000);
         const dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        
+
         const dayStart = new Date(d.setHours(0, 0, 0, 0)).getTime();
         const dayEnd = new Date(d.setHours(23, 59, 59, 999)).getTime();
 
-        const receivedCount = complaints.filter((c) => {
+        const receivedCount = allComplaints.filter((c) => {
           const t = new Date(c.createdAt).getTime();
           return t >= dayStart && t <= dayEnd;
         }).length;
 
-        const resolvedCount = complaints.filter((c) => {
+        const resolvedCount = allComplaints.filter((c) => {
           if (!c.resolvedAt) return false;
           const t = new Date(c.resolvedAt).getTime();
           return t >= dayStart && t <= dayEnd;
@@ -74,13 +96,6 @@ export const analyticsController = {
         });
       }
 
-      const civicUsers = inMemoryDb.users.filter((u) => u.role === 'CITIZEN').length;
-      const officerUsers = inMemoryDb.users.filter((u) => u.role === 'OFFICER' && !u.isBanned).length;
-      const pendingOfficers = inMemoryDb.users.filter((u) => u.role === 'OFFICER' && u.isBanned).length;
-      const totalUsers = civicUsers + officerUsers;
-      const bannedUsers = inMemoryDb.users.filter((u) => u.isBanned && u.role === 'CITIZEN').length;
-      const suspiciousAccounts = inMemoryDb.users.filter((u) => u.fraudScore > 50).length;
-
       res.json({
         success: true,
         stats: {
@@ -91,7 +106,7 @@ export const analyticsController = {
           resolvedRate,
           fraudRate,
           flaggedComplaints: flagged,
-          totalUsers,
+          totalUsers: civicUsers + officerUsers,
           civicUsers,
           officerUsers,
           pendingOfficers,
@@ -112,19 +127,20 @@ export const analyticsController = {
   // GET /api/analytics/district/:name
   getDistrictStats: async (req: Request, res: Response): Promise<void> => {
     try {
+      await connectDb();
       const { name } = req.params;
-      const complaints = inMemoryDb.complaints.filter((c) =>
-        c.location.toLowerCase().includes(name.toLowerCase())
-      );
 
-      const total = complaints.length;
-      const resolved = complaints.filter((c) => c.status === 'RESOLVED').length;
-      const pending = complaints.filter(
-        (c) => c.status === 'SUBMITTED' || c.status === 'ACCEPTED' || c.status === 'ASSIGNED' || c.status === 'IN_PROGRESS'
-      ).length;
-      const officers = inMemoryDb.users.filter(
-        (u) => u.role === 'OFFICER' && u.location.toLowerCase().includes(name.toLowerCase())
-      );
+      const [total, resolved, pending, officers] = await Promise.all([
+        Complaint.countDocuments({ location: { $regex: name, $options: 'i' } }),
+        Complaint.countDocuments({ location: { $regex: name, $options: 'i' }, status: 'RESOLVED' }),
+        Complaint.countDocuments({
+          location: { $regex: name, $options: 'i' },
+          status: { $in: ['SUBMITTED', 'ACCEPTED', 'ASSIGNED', 'IN_PROGRESS'] },
+        }),
+        User.find({ role: 'OFFICER', location: { $regex: name, $options: 'i' } })
+          .select('-password')
+          .lean(),
+      ]);
 
       res.json({
         success: true,
@@ -134,7 +150,7 @@ export const analyticsController = {
         pendingComplaints: pending,
         resolutionPercentage: total > 0 ? Number(((resolved / total) * 100).toFixed(1)) : 0,
         activeOfficersCount: officers.length,
-        officers: officers.map(({ password: _, ...off }) => off),
+        officers,
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: 'Error fetching district statistics.' });
@@ -144,15 +160,16 @@ export const analyticsController = {
   // GET /api/analytics/officer/:id
   getOfficerStats: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await connectDb();
       const { id } = req.params;
-      const officer = inMemoryDb.findUserById(id);
+      const officer = await User.findById(id).select('-password').lean();
 
       if (!officer) {
         res.status(404).json({ success: false, message: 'Officer not found.' });
         return;
       }
 
-      const assignedComplaints = inMemoryDb.complaints.filter((c) => c.assignedToId === id);
+      const assignedComplaints = await Complaint.find({ assignedToId: id }).lean();
       const totalAssigned = assignedComplaints.length;
       const resolved = assignedComplaints.filter((c) => c.status === 'RESOLVED').length;
       const inProgress = assignedComplaints.filter((c) => c.status === 'IN_PROGRESS').length;
@@ -171,14 +188,10 @@ export const analyticsController = {
         avgResolutionHours = Number((totalDuration / resolvedComplaints.length).toFixed(1));
       }
 
-      const efficiencyRating = totalAssigned > 0
-        ? `${((resolved / totalAssigned) * 5).toFixed(1)} / 5.0`
-        : '0.0 / 5.0';
-
       res.json({
         success: true,
         officer: {
-          id: officer.id,
+          id: officer._id.toString(),
           username: officer.username,
           location: officer.location,
           avatarUrl: officer.avatarUrl,
@@ -190,7 +203,7 @@ export const analyticsController = {
           pending,
           resolutionRate,
           avgResolutionHours,
-          efficiencyRating,
+          efficiencyRating: `${totalAssigned > 0 ? ((resolved / totalAssigned) * 5).toFixed(1) : '0.0'} / 5.0`,
         },
       });
     } catch (error: any) {
@@ -198,41 +211,38 @@ export const analyticsController = {
     }
   },
 
-  // GET /api/analytics/fraud-detection
+  // GET /api/analytics/fraud-detection (Account security & anomaly flags)
   getFraudDetection: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
-      const flaggedComplaints = inMemoryDb.complaints
-        .filter((c) => c.fraudFlags.length > 0)
-        .map((c) => {
-          const reporter = inMemoryDb.findUserById(c.reportedById);
-          const totalFraudScore = c.fraudFlags.reduce((acc, f) => acc + f.score, 0);
-          return {
-            ...c,
-            totalFraudScore,
-            reporter: reporter
-              ? {
-                  id: reporter.id,
-                  username: reporter.username,
-                  phone: reporter.phone,
-                  fraudScore: reporter.fraudScore,
-                  isBanned: reporter.isBanned,
-                  bannedUntil: reporter.bannedUntil,
-                }
-              : null,
-          };
-        })
-        .sort((a, b) => b.totalFraudScore - a.totalFraudScore);
+      await connectDb();
 
-      const suspiciousUsers = inMemoryDb.users
-        .filter((u) => u.fraudScore > 50)
-        .map(({ password: _, ...user }) => user);
+      // Account-level security signals
+      const [suspiciousUsers, flaggedComplaints] = await Promise.all([
+        User.find({
+          $or: [{ fraudScore: { $gt: 40 } }, { investigationStatus: 'FLAGGED' }, { isBanned: true }],
+        })
+          .select('-password')
+          .sort({ fraudScore: -1 })
+          .lean(),
+        Complaint.find({ 'fraudFlags.0': { $exists: true } })
+          .populate('reportedById', 'name username phone fraudScore isBanned accountNumber')
+          .sort({ createdAt: -1 })
+          .limit(50)
+          .lean(),
+      ]);
 
       res.json({
         success: true,
         totalFlaggedComplaints: flaggedComplaints.length,
         suspiciousUsersCount: suspiciousUsers.length,
-        flaggedComplaints,
-        suspiciousUsers,
+        flaggedComplaints: flaggedComplaints.map((c) => ({
+          ...c,
+          id: c._id.toString(),
+        })),
+        suspiciousUsers: suspiciousUsers.map((u) => ({
+          ...u,
+          id: u._id.toString(),
+        })),
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: 'Error retrieving fraud analytics.' });

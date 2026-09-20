@@ -7,11 +7,12 @@ import { api } from '../../lib/api';
 
 interface UserItem {
   id: string;
+  accountNumber?: string;
   username: string;
   name?: string;
   email: string;
   phone: string;
-  role: 'CITIZEN' | 'OFFICER' | 'ADMIN';
+  role: 'CITIZEN' | 'OFFICER' | 'ADMIN' | 'EMPLOYEE';
   location: string;
   avatarUrl?: string;
   department?: string | null;
@@ -20,7 +21,12 @@ interface UserItem {
   isApproved?: boolean;
   needsPasswordChange?: boolean;
   fraudScore: number;
-  accountStatus: 'ACTIVE' | 'PENDING_APPROVAL' | 'SUSPENDED';
+  accountStatus: 'ACTIVE' | 'PENDING_APPROVAL' | 'SUSPENDED' | 'DISABLED';
+  presenceStatus?: 'ONLINE' | 'OFFLINE';
+  isOnline?: boolean;
+  lastLoginAt?: string | null;
+  lastSeenAt?: string | null;
+  successfulLoginCount?: number;
   isBanned: boolean;
   bannedUntil?: string | null;
   reportsCount: number;
@@ -540,9 +546,16 @@ export const AdminUsers: React.FC = () => {
                                 </span>
                               )}
                             </p>
-                            <p className="text-[11px] text-on-surface-variant font-mono">
-                              @{u.username}
-                            </p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <span className="text-[11px] text-on-surface-variant font-mono">
+                                @{u.username}
+                              </span>
+                              {u.accountNumber && (
+                                <span className="px-1.5 py-0.2 rounded bg-surface-container text-primary font-mono text-[10px] font-bold border border-surface-container-high" title="Permanent Account Number">
+                                  {u.accountNumber}
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
@@ -587,6 +600,8 @@ export const AdminUsers: React.FC = () => {
                               ? 'bg-purple-50 text-purple-800 border-purple-200'
                               : u.role === 'OFFICER'
                               ? 'bg-blue-50 text-blue-800 border-blue-200'
+                              : u.role === 'EMPLOYEE'
+                              ? 'bg-amber-50 text-amber-800 border-amber-200'
                               : 'bg-emerald-50 text-emerald-800 border-emerald-200'
                           }`}
                         >
@@ -596,6 +611,8 @@ export const AdminUsers: React.FC = () => {
                                 ? 'bg-purple-600'
                                 : u.role === 'OFFICER'
                                 ? 'bg-blue-600'
+                                : u.role === 'EMPLOYEE'
+                                ? 'bg-amber-600'
                                 : 'bg-emerald-600'
                             }`}
                           />
@@ -618,7 +635,7 @@ export const AdminUsers: React.FC = () => {
 
                       {/* Reports Filed / Work Assignments */}
                       <td className="p-3.5">
-                        {u.role === 'OFFICER' ? (
+                        {u.role === 'OFFICER' || u.role === 'EMPLOYEE' ? (
                           <div className="space-y-0.5">
                             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
                               {u.assignedCount || 0} Assigned
@@ -641,28 +658,51 @@ export const AdminUsers: React.FC = () => {
                         )}
                       </td>
 
-                      {/* Account Status */}
+                      {/* Account Status & Real-time Presence */}
                       <td className="p-3.5">
-                        {u.isBanned ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-300">
-                            <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
-                            Suspended
-                          </span>
-                        ) : u.role === 'OFFICER' && (!u.isApproved || u.approvalStatus === 'PENDING') ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-600 animate-ping" />
-                            Pending Approval
-                          </span>
-                        ) : u.role === 'OFFICER' && u.approvalStatus === 'REJECTED' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-800 border border-gray-300">
-                            Rejected
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
-                            Active Good Standing
-                          </span>
-                        )}
+                        <div className="space-y-1.5">
+                          {/* Presence Indicator */}
+                          <div>
+                            {u.presenceStatus === 'ONLINE' || u.isOnline ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                                ONLINE
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                                OFFLINE
+                              </span>
+                            )}
+                            <span className="text-[10px] text-on-surface-variant font-mono ml-1.5">
+                              {u.successfulLoginCount || 1} logins
+                            </span>
+                          </div>
+
+                          {/* Account Good Standing / Suspension */}
+                          <div>
+                            {u.isBanned ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-800 border border-red-300">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
+                                Suspended
+                              </span>
+                            ) : u.role === 'OFFICER' && (!u.isApproved || u.approvalStatus === 'PENDING') ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                                <span className="w-1.5 h-1.5 rounded-full bg-amber-600 animate-ping" />
+                                Pending Approval
+                              </span>
+                            ) : u.role === 'OFFICER' && u.approvalStatus === 'REJECTED' ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-800 border border-gray-300">
+                                Rejected
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-600" />
+                                Active Account
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </td>
 
                       {/* Registered Date */}

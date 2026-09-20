@@ -62,16 +62,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       labelTa: 'புகார் பெட்டி',
     },
     {
-      to: '/officer/assign',
+      to: '/officer/employees',
+      icon: 'badge',
+      labelEn: 'Employee Management',
+      labelTa: 'ஊழியர் மேலாண்மை',
+    },
+    {
+      to: '/officer/assignments',
       icon: 'assignment_ind',
-      labelEn: 'Workforce Assignment',
+      labelEn: 'Report Assignment Desk',
       labelTa: 'பணி ஒதுக்கீடு',
     },
     {
       to: '/officer/verify',
       icon: 'fact_check',
-      labelEn: 'Resolution Verification',
-      labelTa: 'தீர்வு சரிபார்ப்பு',
+      labelEn: 'Report Verification Desk',
+      labelTa: 'அறிக்கை சரிபார்ப்பு',
     },
     {
       to: '/officer/analytics',
@@ -84,6 +90,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       icon: 'shield_person',
       labelEn: 'Official Profile & Updates',
       labelTa: 'அதிகாரி விவரம்',
+    },
+  ];
+
+  const employeeLinks = [
+    {
+      to: '/employee/dashboard',
+      icon: 'engineering',
+      labelEn: 'My Assigned Reports',
+      labelTa: 'எனது பணிகள்',
     },
   ];
 
@@ -110,15 +125,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     {
       to: '/admin/users',
       icon: 'manage_accounts',
-      labelEn: 'User Management & Bans',
+      labelEn: 'User Management & Presence',
       labelTa: 'பயனர் மேலாண்மை',
     },
     {
       to: '/admin/fraud',
       icon: 'security',
-      labelEn: 'Fraud Detection AI',
+      labelEn: 'Account Fraud AI',
       labelTa: 'மோசடி கண்டறிதல்',
-      badge: 'Auto-Ban',
+      badge: 'Risk',
     },
     {
       to: '/admin/settings',
@@ -128,12 +143,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     },
   ];
 
-
   const links =
     user.role === 'ADMIN'
       ? adminLinks
       : user.role === 'OFFICER'
       ? officerLinks
+      : user.role === 'EMPLOYEE'
+      ? employeeLinks
       : citizenLinks;
 
   return (

@@ -1,6 +1,11 @@
 import { Response } from 'express';
 import { z } from 'zod';
-import { inMemoryDb } from '../lib/prisma';
+import { Complaint, IComplaint } from '../models/Complaint';
+import { Employee } from '../models/Employee';
+import { User } from '../models/User';
+import { AssignmentHistory } from '../models/AssignmentHistory';
+import { ReportVerification } from '../models/ReportVerification';
+import { connectDb } from '../lib/db';
 import { AuthenticatedRequest } from '../middleware/auth';
 import { generateComplaintId } from '../utils/generateId';
 import { calculateDistance } from '../utils/calculateDistance';
@@ -20,8 +25,8 @@ const createComplaintSchema = z.object({
   ]),
   description: z.string().min(10, 'Please describe the issue in at least 10 characters').max(500),
   location: z.string().min(3, 'Location is required'),
-  latitude: z.coerce.number().min(8).max(14), // Tamil Nadu roughly 8°N to 13.5°N
-  longitude: z.coerce.number().min(76).max(81), // Tamil Nadu roughly 76°E to 80.5°E
+  latitude: z.coerce.number().min(8).max(14),
+  longitude: z.coerce.number().min(76).max(81),
   priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).default('MEDIUM'),
 });
 
@@ -29,34 +34,74 @@ export const complaintController = {
   // GET /api/complaints
   getAll: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
-      await inMemoryDb.ensureSynced();
+      await connectDb();
       const {
         status,
         category,
         search,
         reportedById,
         assignedToId,
+        assignedEmployeeId,
+        assignmentStatus,
+        verificationStatus,
         page = '1',
         limit = '50',
       } = req.query;
 
+      const filter: any = {};
+
+      // Role-Based Partitioning:
+      // If caller is an Employee, they can ONLY see complaints assigned to their employee record
+      if (req.user?.role === 'EMPLOYEE') {
+        const emp = await Employee.findOne({ userId: req.user.id });
+        if (!emp) {
+          res.json({ success: true, complaints: [], pagination: { total: 0, page: 1, limit: 50, totalPages: 0 } });
+          return;
+        }
+        filter.assignedEmployeeId = emp._id;
+      } else {
+        if (reportedById) filter.reportedById = reportedById;
+        if (assignedToId) filter.assignedToId = assignedToId;
+        if (assignedEmployeeId) filter.assignedEmployeeId = assignedEmployeeId;
+      }
+
+      if (status && status !== 'ALL') filter.status = status;
+      if (category && category !== 'ALL') filter.category = category;
+      if (assignmentStatus && assignmentStatus !== 'ALL') filter.assignmentStatus = assignmentStatus;
+      if (verificationStatus && verificationStatus !== 'ALL') filter.verificationStatus = verificationStatus;
+
+      if (search) {
+        const q = (search as string).trim();
+        filter.$or = [
+          { complaintId: { $regex: q, $options: 'i' } },
+          { description: { $regex: q, $options: 'i' } },
+          { location: { $regex: q, $options: 'i' } },
+        ];
+      }
+
       const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
       const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 50));
-      const offset = (pageNum - 1) * limitNum;
+      const skip = (pageNum - 1) * limitNum;
 
-      const { complaints, total } = inMemoryDb.findComplaints({
-        status: status as string,
-        category: category as string,
-        search: search as string,
-        reportedById: reportedById as string,
-        assignedToId: assignedToId as string,
-        offset,
-        limit: limitNum,
-      });
+      const [complaints, total] = await Promise.all([
+        Complaint.find(filter)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limitNum)
+          .populate('reportedById', 'name username phone location accountNumber')
+          .populate('assignedEmployeeId', 'fullName employeeId department designation')
+          .lean(),
+        Complaint.countDocuments(filter),
+      ]);
+
+      const formatted = complaints.map((c) => ({
+        ...c,
+        id: c._id.toString(),
+      }));
 
       res.json({
         success: true,
-        complaints,
+        complaints: formatted,
         pagination: {
           total,
           page: pageNum,
@@ -73,43 +118,35 @@ export const complaintController = {
   // GET /api/complaints/:id
   getById: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await connectDb();
       const { id } = req.params;
-      const complaint = inMemoryDb.findComplaintById(id);
+
+      const complaint = await Complaint.findById(id)
+        .populate('reportedById', 'name username phone location avatarUrl fraudScore accountNumber')
+        .populate('assignedToId', 'name username phone location avatarUrl department designation')
+        .populate('assignedEmployeeId', 'fullName employeeId phone department designation assignedZone')
+        .lean();
 
       if (!complaint) {
         res.status(404).json({ success: false, message: 'Complaint not found.' });
         return;
       }
 
-      // Populate reporter and assigned officer
-      const reporter = inMemoryDb.findUserById(complaint.reportedById);
-      const assignedOfficer = complaint.assignedToId
-        ? inMemoryDb.findUserById(complaint.assignedToId)
-        : null;
+      // Security check: Employee can only view their own assigned report
+      if (req.user?.role === 'EMPLOYEE') {
+        const emp = await Employee.findOne({ userId: req.user.id });
+        const assignedEmpId = (complaint.assignedEmployeeId as any)?._id?.toString() || complaint.assignedEmployeeId?.toString();
+        if (!emp || assignedEmpId !== emp._id.toString()) {
+          res.status(403).json({ success: false, message: 'Access forbidden for this report.' });
+          return;
+        }
+      }
 
       res.json({
         success: true,
         complaint: {
           ...complaint,
-          reportedBy: reporter
-            ? {
-                id: reporter.id,
-                username: reporter.username,
-                phone: reporter.phone,
-                location: reporter.location,
-                avatarUrl: reporter.avatarUrl,
-                fraudScore: reporter.fraudScore,
-              }
-            : null,
-          assignedTo: assignedOfficer
-            ? {
-                id: assignedOfficer.id,
-                username: assignedOfficer.username,
-                phone: assignedOfficer.phone,
-                location: assignedOfficer.location,
-                avatarUrl: assignedOfficer.avatarUrl,
-              }
-            : null,
+          id: complaint._id.toString(),
         },
       });
     } catch (error: any) {
@@ -120,12 +157,11 @@ export const complaintController = {
   // POST /api/complaints
   create: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await connectDb();
       if (!req.user) {
         res.status(401).json({ success: false, message: 'Please log in to submit a complaint.' });
         return;
       }
-
-      await inMemoryDb.ensureSynced();
 
       const validation = createComplaintSchema.safeParse(req.body);
       if (!validation.success) {
@@ -138,7 +174,7 @@ export const complaintController = {
 
       const { category, description, location, latitude, longitude, priority } = validation.data;
 
-      // Handle photos: from req.files (Multer) or fallback body array
+      // Handle photos from files or body
       const photoUrls: string[] = [];
       const files = req.files as Express.Multer.File[];
       if (files && files.length > 0) {
@@ -152,9 +188,7 @@ export const complaintController = {
         photoUrls.push(req.body.photoUrl);
       }
 
-      // Enforce at least 1 photo for accountability
       if (photoUrls.length === 0) {
-        // Provide standard category placeholder photo if none uploaded in demo
         const defaultPlaceholders: Record<string, string> = {
           ROAD_DAMAGE: 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?w=800',
           STREET_LIGHT: 'https://images.unsplash.com/photo-1509114397022-ed747cca3f65?w=800',
@@ -166,30 +200,18 @@ export const complaintController = {
         photoUrls.push(defaultPlaceholders[category] || 'https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?w=800');
       }
 
-      // Generate TN Complaint ID format: TN-TIR-2026-XXXXX
       const complaintId = generateComplaintId(location);
 
-      // Fetch user context for Fraud Detection
-      const userComplaints = inMemoryDb.complaints.filter((c) => c.reportedById === req.user!.id);
+      // Evaluate fraud heuristics (scores account security, does NOT delete account)
+      const userComplaints = await Complaint.find({ reportedById: req.user.id }).lean();
       const rejectedCount = userComplaints.filter((c) => c.status === 'REJECTED').length;
       const previousCoordinates = userComplaints.map((c) => ({
         latitude: c.latitude,
         longitude: c.longitude,
       }));
-      const samePhoneAccounts = inMemoryDb.users.filter((u) => u.phone === req.user!.phone).length;
-      const existingPhotos = inMemoryDb.complaints
-        .flatMap((c) => c.photos)
-        .map((p) => p.url);
 
-      // Execute Fraud Evaluation Rule Engine
       const fraudResult = evaluateComplaintFraud(
-        {
-          description,
-          location,
-          latitude,
-          longitude,
-          photoUrls,
-        },
+        { description, location, latitude, longitude, photoUrls },
         {
           id: req.user.id,
           phone: req.user.phone,
@@ -198,13 +220,13 @@ export const complaintController = {
           isBanned: req.user.isBanned,
           rejectedComplaintsCount: rejectedCount,
           previousComplaintCoordinates: previousCoordinates,
-          accountsWithSamePhoneCount: samePhoneAccounts,
-          existingPhotoUrls: existingPhotos,
+          accountsWithSamePhoneCount: 1,
+          existingPhotoUrls: [],
         }
       );
 
-      // Create Complaint Record
-      const newComplaint = inMemoryDb.createComplaint({
+      // Create Complaint in MongoDB
+      const newComplaint = await Complaint.create({
         complaintId,
         category,
         description,
@@ -213,57 +235,44 @@ export const complaintController = {
         longitude,
         status: 'SUBMITTED',
         priority,
+        assignmentStatus: 'PENDING_ASSIGNMENT',
+        verificationStatus: 'PENDING_VERIFICATION',
         reportedById: req.user.id,
-        assignedToId: null,
         photos: photoUrls.map((url) => ({
           url,
           type: 'BEFORE',
+          uploadedAt: new Date(),
+        })),
+        timeline: [
+          {
+            stage: 'SUBMITTED',
+            timestamp: new Date(),
+            notes: 'Citizen report filed and awaiting assignment and verification.',
+          },
+        ],
+        fraudFlags: fraudResult.flags.map((f) => ({
+          reason: f.reason,
+          score: f.score,
+          createdAt: new Date(),
         })),
       });
 
-      // Attach fraud flags if any detected
-      for (const flag of fraudResult.flags) {
-        inMemoryDb.addFraudFlag(newComplaint.id, flag.reason, flag.score);
-      }
-
-      // Update user fraud score & auto-ban if threshold exceeded
+      // Update user fraud score if flags triggered
       if (fraudResult.score > 0) {
-        inMemoryDb.updateUser(req.user.id, {
-          fraudScore: fraudResult.newTotalScore,
-          ...(fraudResult.shouldAutoBan
-            ? {
-                isBanned: true,
-                bannedUntil: fraudResult.bannedUntil?.toISOString(),
-              }
-            : {}),
+        await User.findByIdAndUpdate(req.user.id, {
+          $inc: { fraudScore: fraudResult.score },
         });
-
-        if (fraudResult.shouldAutoBan && fraudResult.bannedUntil) {
-          await emailService.sendSuspensionNotice(
-            req.user.email,
-            req.user.username,
-            fraudResult.newTotalScore,
-            fraudResult.bannedUntil
-          );
-        }
       }
 
-      // Send SMS acknowledgment
-      await smsService.sendComplaintAck(req.user.phone, complaintId, category);
+      // Send SMS alert
+      await smsService.sendComplaintAck(req.user.phone, complaintId, category).catch(() => {});
 
-      // Persist complaint and any fraud updates across all serverless instances
-      await inMemoryDb.persistAsync();
+      console.log(`[COMPLAINT-CREATED] ${complaintId} stored in MongoDB permanently.`);
 
       res.status(201).json({
         success: true,
         message: 'Complaint submitted successfully.',
-        complaint: inMemoryDb.findComplaintById(newComplaint.id),
-        fraudDetection: {
-          pointsAssigned: fraudResult.score,
-          flags: fraudResult.flags,
-          userTotalFraudScore: fraudResult.newTotalScore,
-          autoBanned: fraudResult.shouldAutoBan,
-        },
+        complaint: newComplaint.toJSON(),
       });
     } catch (error: any) {
       console.error('Create complaint error:', error);
@@ -271,87 +280,186 @@ export const complaintController = {
     }
   },
 
-  // PUT /api/complaints/:id (Officer / Admin)
-  update: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  // POST /api/complaints/:id/assign-employee (Officer / Controller only)
+  assignEmployee: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await connectDb();
+      if (!req.user || (req.user.role !== 'OFFICER' && req.user.role !== 'ADMIN')) {
+        res.status(403).json({ success: false, message: 'Only authorized Officers/Controllers can assign employees.' });
+        return;
+      }
+
       const { id } = req.params;
-      const complaint = inMemoryDb.findComplaintById(id);
+      const { employeeId, notes, reason } = req.body;
+
+      const complaint = await Complaint.findById(id);
       if (!complaint) {
         res.status(404).json({ success: false, message: 'Complaint not found.' });
         return;
       }
 
-      const { priority, description, location } = req.body;
-      const updated = inMemoryDb.updateComplaint(id, {
-        ...(priority ? { priority } : {}),
-        ...(description ? { description } : {}),
-        ...(location ? { location } : {}),
-      });
-
-      res.json({ success: true, message: 'Complaint updated.', complaint: updated });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Error updating complaint.' });
-    }
-  },
-
-  // DELETE /api/complaints/:id (Admin only)
-  delete: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
-    try {
-      const { id } = _req.params;
-      const deleted = inMemoryDb.deleteComplaint(id);
-      if (!deleted) {
-        res.status(404).json({ success: false, message: 'Complaint not found.' });
-        return;
-      }
-      res.json({ success: true, message: 'Complaint deleted permanently.' });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Error deleting complaint.' });
-    }
-  },
-
-  // POST /api/complaints/:id/assign (Officer / Admin)
-  assign: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    try {
-      const { id } = req.params;
-      const { officerId, notes } = req.body;
-
-      const complaint = inMemoryDb.findComplaintById(id);
-      if (!complaint) {
-        res.status(404).json({ success: false, message: 'Complaint not found.' });
+      const employee = await Employee.findById(employeeId);
+      if (!employee || employee.accountStatus === 'DISABLED') {
+        res.status(400).json({ success: false, message: 'Active employee must be selected.' });
         return;
       }
 
-      const officer = inMemoryDb.findUserById(officerId);
-      if (!officer || officer.role !== 'OFFICER') {
-        res.status(400).json({ success: false, message: 'Valid officer must be specified.' });
-        return;
+      // Check if reassigning from a previous employee
+      let previousEmployee: any = null;
+      const isReassignment = Boolean(
+        complaint.assignedEmployeeId &&
+        complaint.assignedEmployeeId.toString() !== employee._id.toString()
+      );
+
+      if (isReassignment) {
+        previousEmployee = await Employee.findById(complaint.assignedEmployeeId);
+        // Mark previous assignments as REASSIGNED
+        await AssignmentHistory.updateMany(
+          { complaintId: complaint._id, status: 'ACTIVE' },
+          { status: 'REASSIGNED' }
+        );
       }
 
-      const updated = inMemoryDb.updateComplaint(id, {
-        assignedToId: officer.id,
-        assignedAt: new Date().toISOString(),
-        status: complaint.status === 'SUBMITTED' ? 'ASSIGNED' : complaint.status,
+      // 1. Record AssignmentHistory in MongoDB
+      await AssignmentHistory.create({
+        complaintId: complaint._id,
+        complaintCode: complaint.complaintId,
+        employeeId: employee._id,
+        employeeName: `${employee.fullName} (${employee.employeeId})`,
+        assignedByUserId: req.user.id,
+        assignedByUserName: req.user.name || req.user.username,
+        previousEmployeeId: previousEmployee ? previousEmployee._id : null,
+        previousEmployeeName: previousEmployee
+          ? `${previousEmployee.fullName} (${previousEmployee.employeeId})`
+          : null,
+        reassignmentReason: reason || notes || (isReassignment ? 'Reassigned by Officer' : 'Initial assignment'),
+        assignedAt: new Date(),
+        status: 'ACTIVE',
       });
 
-      inMemoryDb.addTimeline(id, {
-        stage: 'ASSIGNED',
-        officerName: req.user?.username || officer.username,
-        notes: notes || `Work order assigned to ${officer.username} (${officer.location})`,
+      // 2. Update Complaint in MongoDB
+      complaint.assignedEmployeeId = employee._id;
+      complaint.assignmentStatus = isReassignment ? 'REASSIGNED' : 'ASSIGNED';
+      complaint.status = complaint.status === 'SUBMITTED' ? 'ASSIGNED' : complaint.status;
+      complaint.assignedAt = new Date();
+
+      complaint.timeline.push({
+        stage: isReassignment ? 'REASSIGNED' : 'ASSIGNED',
+        timestamp: new Date(),
+        officerName: req.user.name || req.user.username,
+        notes: isReassignment
+          ? `Work order reassigned from ${previousEmployee?.fullName || 'previous staff'} to ${employee.fullName} (${employee.employeeId}). Reason: ${reason || notes || 'Operational adjustment'}`
+          : `Work order assigned to field staff ${employee.fullName} (${employee.employeeId}). Notes: ${notes || 'Assigned for inspection'}`,
       });
+
+      await complaint.save();
+
+      console.log(`[ASSIGNMENT] ${complaint.complaintId} assigned to ${employee.fullName} by ${req.user.username}`);
 
       res.json({
         success: true,
-        message: `Complaint assigned to officer ${officer.username}.`,
-        complaint: inMemoryDb.findComplaintById(id),
+        message: `Complaint assigned to ${employee.fullName} (${employee.employeeId}).`,
+        complaint: complaint.toJSON(),
       });
     } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Error assigning complaint.' });
+      console.error('assignEmployee error:', error);
+      res.status(500).json({ success: false, message: 'Failed to assign employee.' });
     }
   },
 
-  // POST /api/complaints/:id/status (Officer / Admin)
+  // GET /api/complaints/:id/assignment-history
+  getAssignmentHistory: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const { id } = req.params;
+
+      const history = await AssignmentHistory.find({ complaintId: id })
+        .sort({ assignedAt: -1 })
+        .lean();
+
+      res.json({
+        success: true,
+        count: history.length,
+        history: history.map((h) => ({
+          ...h,
+          id: h._id.toString(),
+        })),
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Error retrieving assignment history.' });
+    }
+  },
+
+  // POST /api/complaints/:id/verify (Officer / Manager verification desk)
+  verifyReport: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      if (!req.user || (req.user.role !== 'OFFICER' && req.user.role !== 'ADMIN')) {
+        res.status(403).json({ success: false, message: 'Only authorized Officers can perform verification sign-offs.' });
+        return;
+      }
+
+      const { id } = req.params;
+      const { verificationResult, verificationNotes, progressStatus } = req.body;
+
+      if (!['GENUINE', 'FAKE', 'NEEDS_REVIEW'].includes(verificationResult)) {
+        res.status(400).json({ success: false, message: 'Verification result must be GENUINE, FAKE, or NEEDS_REVIEW.' });
+        return;
+      }
+
+      const complaint = await Complaint.findById(id);
+      if (!complaint) {
+        res.status(404).json({ success: false, message: 'Complaint not found.' });
+        return;
+      }
+
+      complaint.verificationStatus = verificationResult;
+      complaint.verifiedByUserId = req.user.id;
+      complaint.verifiedByName = `${req.user.name || req.user.username} (Officer)`;
+      complaint.verifiedAt = new Date();
+      complaint.verificationNotes = verificationNotes || `Report verified as ${verificationResult}`;
+
+      if (progressStatus && ['IN_PROGRESS', 'RESOLVED', 'REJECTED'].includes(progressStatus)) {
+        complaint.status = progressStatus;
+        if (progressStatus === 'RESOLVED') complaint.resolvedAt = new Date();
+      }
+
+      complaint.timeline.push({
+        stage: `VERIFIED_${verificationResult}`,
+        timestamp: new Date(),
+        officerName: req.user.name || req.user.username,
+        notes: verificationNotes || `Officer verification marked: ${verificationResult}`,
+      });
+
+      await complaint.save();
+
+      // Create persistent ReportVerification log
+      await ReportVerification.create({
+        complaintId: complaint._id,
+        complaintCode: complaint.complaintId,
+        verifiedByUserId: req.user.id,
+        verifiedByName: req.user.name || req.user.username,
+        verificationResult,
+        verificationNotes: verificationNotes || `Report marked ${verificationResult}`,
+        verifiedAt: new Date(),
+      });
+
+      console.log(`[REPORT-VERIFIED-OFFICER] ${complaint.complaintId} verified as ${verificationResult}`);
+
+      res.json({
+        success: true,
+        message: `Report marked as ${verificationResult}. Verification saved in MongoDB.`,
+        complaint: complaint.toJSON(),
+      });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Failed to record report verification.' });
+    }
+  },
+
+  // POST /api/complaints/:id/status
   updateStatus: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await connectDb();
       const { id } = req.params;
       const { status, notes, rejectionReason } = req.body;
 
@@ -361,7 +469,7 @@ export const complaintController = {
         return;
       }
 
-      const complaint = inMemoryDb.findComplaintById(id);
+      const complaint = await Complaint.findById(id);
       if (!complaint) {
         res.status(404).json({ success: false, message: 'Complaint not found.' });
         return;
@@ -370,90 +478,56 @@ export const complaintController = {
       const isResolved = status === 'RESOLVED';
       const isRejected = status === 'REJECTED';
 
-      inMemoryDb.updateComplaint(id, {
-        status,
-        ...(isResolved ? { resolvedAt: new Date().toISOString() } : {}),
-        ...(isRejected ? { rejectionReason: rejectionReason || notes || 'Rejected by officer.' } : {}),
-      });
+      complaint.status = status;
+      if (isResolved) complaint.resolvedAt = new Date();
+      if (isRejected) complaint.rejectionReason = rejectionReason || notes || 'Rejected by officer';
 
-      inMemoryDb.addTimeline(id, {
+      complaint.timeline.push({
         stage: status,
+        timestamp: new Date(),
         officerName: req.user?.username,
-        notes: notes || `Status advanced to ${status}`,
+        notes: notes || `Status updated to ${status}`,
       });
 
-      // Notify citizen
-      const citizen = inMemoryDb.findUserById(complaint.reportedById);
+      await complaint.save();
+
+      // Notify citizen if email/phone exists
+      const citizen = await User.findById(complaint.reportedById);
       if (citizen) {
         if (isResolved) {
-          await smsService.sendResolutionAlert(citizen.phone, complaint.complaintId);
+          await smsService.sendResolutionAlert(citizen.phone, complaint.complaintId).catch(() => {});
         }
-        await emailService.sendComplaintStatusUpdate(citizen.email, complaint.complaintId, status, notes);
+        await emailService.sendComplaintStatusUpdate(citizen.email, complaint.complaintId, status, notes).catch(() => {});
       }
-
-      await inMemoryDb.persistAsync();
 
       res.json({
         success: true,
         message: `Complaint status updated to ${status}.`,
-        complaint: inMemoryDb.findComplaintById(id),
+        complaint: complaint.toJSON(),
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: 'Error updating complaint status.' });
     }
   },
 
-  // POST /api/complaints/:id/photo
-  uploadPhoto: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
-    try {
-      const { id } = req.params;
-      const { type = 'EVIDENCE', url } = req.body;
-
-      const complaint = inMemoryDb.findComplaintById(id);
-      if (!complaint) {
-        res.status(404).json({ success: false, message: 'Complaint not found.' });
-        return;
-      }
-
-      let finalUrl = url;
-      if (req.file) {
-        finalUrl = await uploadToCloudinary(req.file.buffer);
-      }
-
-      if (!finalUrl) {
-        res.status(400).json({ success: false, message: 'No photo provided.' });
-        return;
-      }
-
-      const photo = inMemoryDb.addPhoto(id, finalUrl, type);
-      res.status(201).json({
-        success: true,
-        message: 'Photo uploaded successfully.',
-        photo,
-      });
-    } catch (error: any) {
-      res.status(500).json({ success: false, message: 'Failed to upload photo.' });
-    }
-  },
-
-  // GET /api/complaints/nearby?latitude=...&longitude=...&radius=5
+  // GET /api/complaints/nearby
   getNearby: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await connectDb();
       const lat = parseFloat(req.query.latitude as string);
       const lng = parseFloat(req.query.longitude as string);
-      const radius = parseFloat((req.query.radius as string) || '5'); // default 5km
+      const radius = parseFloat((req.query.radius as string) || '5');
 
       if (isNaN(lat) || isNaN(lng)) {
-        res.status(400).json({
-          success: false,
-          message: 'Valid latitude and longitude parameters are required.',
-        });
+        res.status(400).json({ success: false, message: 'Valid latitude and longitude required.' });
         return;
       }
 
-      const nearbyComplaints = inMemoryDb.complaints
+      const all = await Complaint.find().populate('reportedById', 'name username').lean();
+      const nearby = all
         .map((c) => ({
           ...c,
+          id: c._id.toString(),
           distanceKm: Number(calculateDistance(lat, lng, c.latitude, c.longitude).toFixed(2)),
         }))
         .filter((c) => c.distanceKm <= radius)
@@ -461,9 +535,9 @@ export const complaintController = {
 
       res.json({
         success: true,
-        count: nearbyComplaints.length,
+        count: nearby.length,
         radiusKm: radius,
-        complaints: nearbyComplaints,
+        complaints: nearby,
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: 'Failed to fetch nearby complaints.' });
@@ -473,18 +547,38 @@ export const complaintController = {
   // GET /api/complaints/user/:userId
   getByUser: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
+      await connectDb();
       const { userId } = req.params;
-      const userComplaints = inMemoryDb.complaints
-        .filter((c) => c.reportedById === userId)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const userComplaints = await Complaint.find({ reportedById: userId })
+        .sort({ createdAt: -1 })
+        .lean();
 
       res.json({
         success: true,
         count: userComplaints.length,
-        complaints: userComplaints,
+        complaints: userComplaints.map((c) => ({
+          ...c,
+          id: c._id.toString(),
+        })),
       });
     } catch (error: any) {
       res.status(500).json({ success: false, message: 'Error retrieving user complaints.' });
+    }
+  },
+
+  // DELETE /api/complaints/:id (Admin only)
+  delete: async (_req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const { id } = _req.params;
+      const deleted = await Complaint.findByIdAndDelete(id);
+      if (!deleted) {
+        res.status(404).json({ success: false, message: 'Complaint not found.' });
+        return;
+      }
+      res.json({ success: true, message: 'Complaint deleted permanently.' });
+    } catch (error: any) {
+      res.status(500).json({ success: false, message: 'Error deleting complaint.' });
     }
   },
 };

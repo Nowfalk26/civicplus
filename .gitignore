@@ -33,3 +33,4 @@ Thumbs.db
 coverage/
 .turbo/
 *persisted_db.json
+backend/data/

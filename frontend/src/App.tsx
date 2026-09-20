@@ -30,9 +30,14 @@ import { CitizenProfile } from './pages/citizen/CitizenProfile';
 import { OfficerDashboard } from './pages/officer/OfficerDashboard';
 import { OfficerInbox } from './pages/officer/OfficerInbox';
 import { OfficerAssign } from './pages/officer/OfficerAssign';
+import { OfficerEmployees } from './pages/officer/OfficerEmployees';
+import { OfficerReportAssignment } from './pages/officer/OfficerReportAssignment';
 import { OfficerVerify } from './pages/officer/OfficerVerify';
 import { OfficerAnalytics } from './pages/officer/OfficerAnalytics';
 import { OfficerProfile } from './pages/officer/OfficerProfile';
+
+// Employee Portal Pages
+import { EmployeeDashboard } from './pages/employee/EmployeeDashboard';
 
 // Admin Portal Pages (Controller)
 import { AdminDashboard } from './pages/admin/AdminDashboard';
@@ -186,10 +191,26 @@ export const App: React.FC = () => {
               }
             />
             <Route
+              path="/officer/employees"
+              element={
+                <ProtectedRoute allowedRoles={['OFFICER', 'ADMIN']}>
+                  <OfficerEmployees />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/officer/assignments"
+              element={
+                <ProtectedRoute allowedRoles={['OFFICER', 'ADMIN']}>
+                  <OfficerReportAssignment />
+                </ProtectedRoute>
+              }
+            />
+            <Route
               path="/officer/assign"
               element={
                 <ProtectedRoute allowedRoles={['OFFICER', 'ADMIN']}>
-                  <OfficerAssign />
+                  <OfficerReportAssignment />
                 </ProtectedRoute>
               }
             />
@@ -198,6 +219,16 @@ export const App: React.FC = () => {
               element={
                 <ProtectedRoute allowedRoles={['OFFICER', 'ADMIN']}>
                   <OfficerVerify />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Employee Portal */}
+            <Route
+              path="/employee/dashboard"
+              element={
+                <ProtectedRoute allowedRoles={['EMPLOYEE', 'OFFICER', 'ADMIN']}>
+                  <EmployeeDashboard />
                 </ProtectedRoute>
               }
             />

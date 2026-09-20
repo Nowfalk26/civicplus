@@ -20,14 +20,6 @@ router.post(
   complaintController.create
 );
 
-// Update complaint details - officer and admin
-router.put(
-  '/:id',
-  authenticate,
-  authorize('OFFICER', 'ADMIN'),
-  complaintController.update
-);
-
 // Delete complaint - admin only
 router.delete(
   '/:id',
@@ -36,14 +28,7 @@ router.delete(
   complaintController.delete
 );
 
-// Workflow actions
-router.post(
-  '/:id/assign',
-  authenticate,
-  authorize('OFFICER', 'ADMIN'),
-  complaintController.assign
-);
-
+// Workflow actions (Status update)
 router.post(
   '/:id/status',
   authenticate,
@@ -51,11 +36,27 @@ router.post(
   complaintController.updateStatus
 );
 
+// Employee Assignment actions
 router.post(
-  '/:id/photo',
+  '/:id/assign-employee',
   authenticate,
-  uploadMiddleware.single('photo'),
-  complaintController.uploadPhoto
+  authorize('OFFICER', 'ADMIN'),
+  complaintController.assignEmployee
+);
+
+router.get(
+  '/:id/assignment-history',
+  authenticate,
+  authorize('OFFICER', 'ADMIN'),
+  complaintController.getAssignmentHistory
+);
+
+// Officer Report Verification Desk
+router.post(
+  '/:id/verify',
+  authenticate,
+  authorize('OFFICER', 'ADMIN'),
+  complaintController.verifyReport
 );
 
 export default router;

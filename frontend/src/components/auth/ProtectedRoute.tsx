@@ -4,7 +4,7 @@ import { useStore } from '../../store/useStore';
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  allowedRoles?: ('CITIZEN' | 'OFFICER' | 'ADMIN')[];
+  allowedRoles?: ('CITIZEN' | 'OFFICER' | 'ADMIN' | 'EMPLOYEE')[];
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
@@ -17,10 +17,13 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   if (!user) {
     const isOfficerRoute = location.pathname.startsWith('/officer');
     const isControllerRoute = location.pathname.startsWith('/admin') || location.pathname.startsWith('/controller');
+    const isEmployeeRoute = location.pathname.startsWith('/employee');
     const targetLogin = isOfficerRoute
       ? '/officer/login'
       : isControllerRoute
       ? '/controller/login'
+      : isEmployeeRoute
+      ? '/officer/login'
       : '/civic/login';
 
     return <Navigate to={targetLogin} state={{ from: location }} replace />;
@@ -51,6 +54,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     // Redirect to their respective default home
     if (user.role === 'ADMIN') return <Navigate to="/admin/dashboard" replace />;
     if (user.role === 'OFFICER') return <Navigate to="/officer/dashboard" replace />;
+    if (user.role === 'EMPLOYEE') return <Navigate to="/employee/dashboard" replace />;
     return <Navigate to="/citizen/dashboard" replace />;
   }
 

@@ -1,0 +1,17 @@
+import { Router } from 'express';
+import { employeeController } from '../controllers/employees';
+import { authenticate, authorize } from '../middleware/auth';
+
+const router = Router();
+
+// Employee Self-Service Desk
+router.get('/my-reports', authenticate, authorize('EMPLOYEE'), employeeController.getMyReports);
+router.post('/my-reports/:id/verify', authenticate, authorize('EMPLOYEE'), employeeController.verifyAssignedReport);
+
+// Officer & Controller Management
+router.get('/', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.getAll);
+router.post('/', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.create);
+router.put('/:id/status', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.toggleStatus);
+router.get('/workload', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.getWorkload);
+
+export default router;

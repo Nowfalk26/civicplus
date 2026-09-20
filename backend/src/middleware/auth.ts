@@ -1,28 +1,38 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { inMemoryDb } from '../lib/prisma';
-import { UserRecord } from '../data/seedData';
+import { User, IUser, UserRole } from '../models/User';
+import { connectDb } from '../lib/db';
 
-const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'civics_plus_super_secret_access_key_tamil_nadu_2026';
-const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'civics_plus_super_secret_refresh_key_tamil_nadu_2026';
+const ACCESS_SECRET =
+  process.env.JWT_ACCESS_SECRET || 'civics_plus_super_secret_access_key_tamil_nadu_2026';
+const REFRESH_SECRET =
+  process.env.JWT_REFRESH_SECRET || 'civics_plus_super_secret_refresh_key_tamil_nadu_2026';
 
 export interface JwtPayload {
   userId: string;
   email: string;
-  role: 'CITIZEN' | 'OFFICER' | 'ADMIN';
+  role: UserRole;
   iat?: number;
   exp?: number;
 }
 
 export interface AuthenticatedRequest extends Request {
-  user?: UserRecord;
+  user?: IUser;
 }
 
-export function generateAccessToken(payload: { userId: string; email: string; role: 'CITIZEN' | 'OFFICER' | 'ADMIN' }): string {
+export function generateAccessToken(payload: {
+  userId: string;
+  email: string;
+  role: UserRole;
+}): string {
   return jwt.sign(payload, ACCESS_SECRET, { expiresIn: '15m' });
 }
 
-export function generateRefreshToken(payload: { userId: string; email: string; role: 'CITIZEN' | 'OFFICER' | 'ADMIN' }): string {
+export function generateRefreshToken(payload: {
+  userId: string;
+  email: string;
+  role: UserRole;
+}): string {
   return jwt.sign(payload, REFRESH_SECRET, { expiresIn: '7d' });
 }
 
@@ -36,8 +46,8 @@ export function verifyRefreshToken(token: string): JwtPayload {
 
 /**
  * Authentication Middleware:
- * Extracts JWT token from Authorization header (Bearer ...) or httpOnly cookie.
- * Validates token and checks if user is suspended/banned.
+ * Extracts and verifies JWT token from Authorization header or cookies.
+ * Loads the stable persistent user from MongoDB.
  */
 export async function authenticate(
   req: AuthenticatedRequest,
@@ -61,41 +71,59 @@ export async function authenticate(
       return;
     }
 
+    await connectDb();
     const decoded = verifyAccessToken(token);
-    const user = inMemoryDb.findUserById(decoded.userId);
+    const user = await User.findById(decoded.userId);
 
     if (!user) {
       res.status(401).json({
         success: false,
-        message: 'Please log in to continue.',
+        message: 'Account not found. Please log in again.',
       });
       return;
     }
 
-    // Check ban status
-    if (user.isBanned) {
+    // Check ban / suspension status
+    if (user.isBanned || user.accountStatus === 'SUSPENDED') {
       if (user.bannedUntil && new Date(user.bannedUntil) > new Date()) {
         res.status(403).json({
           success: false,
-          message: `Your account is temporarily suspended until ${new Date(user.bannedUntil).toLocaleDateString('en-IN')}. Reason: Excessive civic fraud / fraudulent activity.`,
+          message: `Your account is temporarily suspended until ${new Date(
+            user.bannedUntil
+          ).toLocaleDateString('en-IN')}.`,
           bannedUntil: user.bannedUntil,
         });
         return;
       } else if (!user.bannedUntil) {
         res.status(403).json({
           success: false,
-          message: 'Your account has been permanently suspended by administration for civic fraud violations.',
+          message: 'Your account has been suspended by administration.',
         });
         return;
       }
     }
+
+    if (user.accountStatus === 'DISABLED') {
+      res.status(403).json({
+        success: false,
+        message: 'Your account has been deactivated.',
+      });
+      return;
+    }
+
+    // Update lastSeenAt activity timestamp in background
+    User.findByIdAndUpdate(user._id, {
+      lastSeenAt: new Date(),
+      isOnline: true,
+      presenceStatus: 'ONLINE',
+    }).exec().catch(() => {});
 
     req.user = user;
     next();
   } catch (error) {
     res.status(401).json({
       success: false,
-      message: 'Please log in to continue.',
+      message: 'Session expired. Please log in again.',
     });
   }
 }
@@ -103,7 +131,7 @@ export async function authenticate(
 /**
  * Role-Based Access Control Middleware
  */
-export function authorize(...allowedRoles: ('CITIZEN' | 'OFFICER' | 'ADMIN')[]) {
+export function authorize(...allowedRoles: UserRole[]) {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
     if (!req.user) {
       res.status(401).json({ success: false, message: 'Please log in to continue.' });
@@ -113,17 +141,15 @@ export function authorize(...allowedRoles: ('CITIZEN' | 'OFFICER' | 'ADMIN')[]) 
     if (!allowedRoles.includes(req.user.role)) {
       res.status(403).json({
         success: false,
-        message: `Forbidden. Role '${req.user.role}' lacks permissions for this action. Required: ${allowedRoles.join(' or ')}`,
+        message: `Forbidden. Role '${req.user.role}' lacks permissions. Required: ${allowedRoles.join(' or ')}`,
       });
       return;
     }
 
-    // Authoritative check for Officer access approval
-    if (req.user.role === 'OFFICER' && allowedRoles.includes('OFFICER')) {
+    // Strict check for Officer approval
+    if (req.user.role === 'OFFICER') {
       const isApproved =
-        req.user.approvalStatus === 'APPROVED' ||
-        req.user.isApproved === true ||
-        (!req.user.isBanned && req.user.approvalStatus !== 'PENDING' && req.user.approvalStatus !== 'REJECTED');
+        req.user.approvalStatus === 'APPROVED' && req.user.isApproved === true && !req.user.isBanned;
 
       if (!isApproved) {
         res.status(403).json({

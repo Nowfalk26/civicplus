@@ -30,6 +30,12 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
             Officer Portal • அதிகாரி
           </span>
         );
+      case 'EMPLOYEE':
+        return (
+          <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
+            Employee Workspace • களப் பணியாளர்
+          </span>
+        );
       default:
         return (
           <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
@@ -96,6 +102,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
                     ? '/admin/dashboard'
                     : user.role === 'OFFICER'
                     ? '/officer/dashboard'
+                    : user.role === 'EMPLOYEE'
+                    ? '/employee/dashboard'
                     : '/citizen/profile'
                 }
                 className="flex items-center gap-2 p-1.5 pr-2 rounded-lg hover:bg-surface-container transition-colors"

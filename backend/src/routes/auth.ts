@@ -10,6 +10,7 @@ router.post('/register', authRateLimiter, authController.register);
 router.post('/login', authRateLimiter, authController.login);
 router.post('/refresh', authController.refresh);
 router.post('/logout', authController.logout);
+router.delete('/account', authenticate, authController.deleteAccount); // Explicit user self-deletion
 router.get('/me', authenticate, authController.getMe);
 router.put('/me', authenticate, authController.updateMe);
 
@@ -28,14 +29,15 @@ router.post('/officer/login', authRateLimiter, authController.officerLogin);
 router.post('/officer/google', authRateLimiter, authController.officerGoogleLogin);
 router.post('/officer/set-password', authenticate, authController.officerSetPassword);
 
-// 4. Officer Profile Change Requests (Officer actions)
+// 4. Employee Authentication Route
+router.post('/employee/login', authRateLimiter, authController.employeeLogin);
+
+// 5. Officer Profile Change Requests
 router.post('/officer/profile-change-request', authenticate, authController.officerCreateProfileChangeRequest);
 router.get('/officer/profile-change-requests', authenticate, authController.officerGetProfileChangeRequests);
 
-// 5. Google OAuth Configuration endpoints
+// 6. Google OAuth Configuration endpoints
 router.get('/google-config', authController.getGoogleConfig);
 router.post('/save-google-client-id', authController.saveGoogleClientId);
 
 export default router;
-
-

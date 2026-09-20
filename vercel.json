@@ -8,6 +8,7 @@
     "backend": {
       "root": "backend",
       "framework": "express",
+      "entrypoint": "index.js",
       "buildCommand": "npm run build"
     }
   },

@@ -2,12 +2,8 @@
   "outputDirectory": "frontend/dist",
   "rewrites": [
     {
-      "source": "/api/health",
-      "destination": "/api/health"
-    },
-    {
       "source": "/api/(.*)",
-      "destination": "/api"
+      "destination": "/api/$1"
     },
     {
       "source": "/(.*)",

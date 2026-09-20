@@ -9,9 +9,11 @@ import { User } from '../models/User';
 import { getNextAccountNumber } from '../models/Counter';
 
 // Configure public DNS servers for Windows SRV query resolution with MongoDB Atlas
-try {
-  dns.setServers(['8.8.8.8', '1.1.1.1']);
-} catch {}
+if (process.platform === 'win32') {
+  try {
+    dns.setServers(['8.8.8.8', '1.1.1.1']);
+  } catch {}
+}
 
 interface CachedConnection {
   conn: typeof mongoose | null;

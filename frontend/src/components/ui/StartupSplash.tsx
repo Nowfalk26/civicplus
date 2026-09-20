@@ -11,23 +11,9 @@ export const StartupSplash: React.FC<StartupSplashProps> = ({ onFinish }) => {
     return !sessionStorage.getItem('civicsplus_startup_seen');
   });
 
-  // Stages: 'video' | 'logo' | 'fading' | 'done'
-  const [stage, setStage] = useState<'video' | 'logo' | 'fading' | 'done'>('video');
-  const [videoLoaded, setVideoLoaded] = useState<boolean>(false);
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  // Stages: 'logo' | 'fading' | 'done'
+  const [stage, setStage] = useState<'logo' | 'fading' | 'done'>('logo');
   const logoTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const safetyTimerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Transition to Logo Image stage
-  const handleTransitionToLogo = () => {
-    if (stage !== 'video') return;
-    setStage('logo');
-
-    // Display the logo image cleanly for 1.8 seconds before smoothly fading into app
-    logoTimerRef.current = setTimeout(() => {
-      handleFadeOut();
-    }, 1800);
-  };
 
   // Smooth fade out of splash overlay
   const handleFadeOut = () => {
@@ -49,49 +35,22 @@ export const StartupSplash: React.FC<StartupSplashProps> = ({ onFinish }) => {
   // Skip startup animation
   const handleSkip = () => {
     if (logoTimerRef.current) clearTimeout(logoTimerRef.current);
-    if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
     handleFadeOut();
   };
 
   useEffect(() => {
     if (!shouldShow) return;
 
-    // Safety fallback timer: If video fails to start playing within 1.5s, advance to logo
-    safetyTimerRef.current = setTimeout(() => {
-      if (stage === 'video' && !videoLoaded) {
-        console.warn('Video not loaded or started within threshold, falling back to logo image.');
-        handleTransitionToLogo();
-      }
-    }, 1500);
-
-    // Hard absolute safety timeout: Startup sequence must NEVER hold user past 7 seconds
-    const hardTimeout = setTimeout(() => {
-      handleFadeOut();
-    }, 7000);
+    if (stage === 'logo') {
+      logoTimerRef.current = setTimeout(() => {
+        handleFadeOut();
+      }, 1800);
+    }
 
     return () => {
       if (logoTimerRef.current) clearTimeout(logoTimerRef.current);
-      if (safetyTimerRef.current) clearTimeout(safetyTimerRef.current);
-      clearTimeout(hardTimeout);
     };
-  }, [shouldShow, stage, videoLoaded]);
-
-  // Attempt auto-play with sound muted (required for modern iOS & Android webview autoplay)
-  useEffect(() => {
-    if (stage === 'video' && videoRef.current) {
-      const playPromise = videoRef.current.play();
-      if (playPromise !== undefined) {
-        playPromise
-          .then(() => {
-            setVideoLoaded(true);
-          })
-          .catch(() => {
-            // Autoplay blocked or asset missing -> immediately fallback to logo
-            handleTransitionToLogo();
-          });
-      }
-    }
-  }, [stage]);
+  }, [shouldShow, stage]);
 
   if (!shouldShow || stage === 'done') {
     return null;
@@ -106,28 +65,7 @@ export const StartupSplash: React.FC<StartupSplashProps> = ({ onFinish }) => {
     >
       {/* Centered Media Container */}
       <div className="relative w-full max-w-sm sm:max-w-md md:max-w-lg aspect-square flex items-center justify-center p-6">
-        {/* Step 1: Animation Video */}
-        {stage === 'video' && (
-          <div className="w-full h-full flex items-center justify-center">
-            <video
-              ref={videoRef}
-              playsInline
-              muted
-              autoPlay
-              preload="auto"
-              onPlaying={() => setVideoLoaded(true)}
-              onEnded={handleTransitionToLogo}
-              onError={handleTransitionToLogo}
-              className="w-full h-full object-contain rounded-2xl"
-            >
-              <source src="/civicsplus-animation.mp4" type="video/mp4" />
-              <source src="/logo-animation.mp4" type="video/mp4" />
-              <source src="/civicsplus-animation.webm" type="video/webm" />
-            </video>
-          </div>
-        )}
-
-        {/* Step 2: Exact CIVICS PLUS Logo Image */}
+        {/* Exact CIVICS PLUS Logo Image */}
         {(stage === 'logo' || stage === 'fading') && (
           <div className="w-full h-full flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-500">
             <img
@@ -148,9 +86,7 @@ export const StartupSplash: React.FC<StartupSplashProps> = ({ onFinish }) => {
           <span className="w-2 h-2 rounded-full bg-primary/30 animate-pulse delay-200" />
         </div>
         <p className="text-[11px] font-semibold text-on-surface-variant tracking-wider uppercase">
-          {stage === 'video'
-            ? 'Initializing Civic System...'
-            : 'Civics Plus • Tamil Nadu'}
+          Civics Plus • Tamil Nadu
         </p>
       </div>
 
@@ -167,3 +103,4 @@ export const StartupSplash: React.FC<StartupSplashProps> = ({ onFinish }) => {
     </div>
   );
 };
+

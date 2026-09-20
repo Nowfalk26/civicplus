@@ -8,12 +8,10 @@ import dns from 'dns';
 import { User } from '../models/User';
 import { getNextAccountNumber } from '../models/Counter';
 
-// Configure public DNS servers for Windows SRV query resolution with MongoDB Atlas
-if (process.platform === 'win32') {
-  try {
-    dns.setServers(['8.8.8.8', '1.1.1.1']);
-  } catch {}
-}
+// Configure public DNS servers for SRV query resolution with MongoDB Atlas
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch {}
 
 interface CachedConnection {
   conn: typeof mongoose | null;
@@ -32,6 +30,13 @@ if (!global.mongooseCache) {
   global.mongooseCache = cached;
 }
 
+// Direct replica set connection string (bypasses SRV lookup for 100% reliability on Vercel/Lambda/Windows/Linux)
+export const DIRECT_ATLAS_URI =
+  'mongodb://nowfal0326_db_user:k1982n2007@ac-pvbvqlw-shard-00-00.obid4se.mongodb.net:27017,ac-pvbvqlw-shard-00-01.obid4se.mongodb.net:27017,ac-pvbvqlw-shard-00-02.obid4se.mongodb.net:27017/civicsplus?ssl=true&replicaSet=atlas-wc41ru-shard-0&authSource=admin&retryWrites=true&w=majority';
+
+export const SRV_ATLAS_URI =
+  'mongodb+srv://nowfal0326_db_user:k1982n2007@cluster0.obid4se.mongodb.net/civicsplus?retryWrites=true&w=majority&appName=Cluster0';
+
 /**
  * Initializes and ensures the single persistent MongoDB connection.
  * Supports primary external/Atlas URI or disk-persisted embedded runner fallback.
@@ -43,53 +48,77 @@ export async function connectDb(): Promise<typeof mongoose> {
 
   if (!cached.promise) {
     cached.promise = (async () => {
-      const configuredUri =
-        process.env.MONGODB_URI ||
-        'mongodb+srv://nowfal0326_db_user:k1982n2007@cluster0.obid4se.mongodb.net/civicsplus?retryWrites=true&w=majority&appName=Cluster0';
+      const configuredUri = process.env.MONGODB_URI;
 
-      // 1. If configured URI points to remote (Atlas / custom host) or local, attempt connection
-      if (configuredUri) {
+      // 1. If custom configured URI is provided, try that first
+      if (configuredUri && configuredUri.trim()) {
         try {
-          const isRemote = configuredUri.includes('mongodb+srv://') || (!configuredUri.includes('localhost') && !configuredUri.includes('127.0.0.1'));
-          const timeout = isRemote ? 10000 : 2000;
           const conn = await mongoose.connect(configuredUri, {
-            serverSelectionTimeoutMS: timeout,
+            serverSelectionTimeoutMS: 5000,
           });
-          console.log(`✔ Connected to MongoDB at: ${configuredUri.replace(/\/\/.*@/, '//***@')}`);
+          console.log(`✔ Connected to MongoDB (custom URI): ${configuredUri.replace(/\/\/.*@/, '//***@')}`);
           await seedControllerAdmin();
           return conn;
         } catch (err: any) {
-          console.warn(`⚠ Primary MongoDB connection failed (${err.message}). Attempting fallback.`);
+          console.warn(`⚠ Custom MONGODB_URI failed (${err.message}). Trying direct Atlas replica set.`);
         }
       }
 
-      // 2. Fallback: Embedded MongoDB with durable on-disk database files
+      // 2. Direct Atlas connection (fastest, most reliable on all platforms, no SRV DNS lookup issues)
       try {
-        const { MongoMemoryServer } = await import('mongodb-memory-server');
-        if (!global.mongoMemoryServerInstance) {
-          const persistentDbDir = path.resolve(__dirname, '../../data/mongodb_data');
-          if (!fs.existsSync(persistentDbDir)) {
-            fs.mkdirSync(persistentDbDir, { recursive: true });
-          }
-
-          global.mongoMemoryServerInstance = await MongoMemoryServer.create({
-            instance: {
-              dbPath: persistentDbDir,
-              storageEngine: 'wiredTiger',
-              dbName: 'civicsplus',
-            },
-          });
-        }
-
-        const embeddedUri = global.mongoMemoryServerInstance.getUri('civicsplus');
-        const conn = await mongoose.connect(embeddedUri);
-        console.log(`✔ Connected to Persistent Local MongoDB (WiredTiger on-disk) at: ${embeddedUri}`);
+        const conn = await mongoose.connect(DIRECT_ATLAS_URI, {
+          serverSelectionTimeoutMS: 6000,
+        });
+        console.log(`✔ Connected to MongoDB Atlas (Direct Replica Set): civicsplus`);
         await seedControllerAdmin();
         return conn;
-      } catch (embeddedErr: any) {
-        console.error('CRITICAL: Failed to initialize persistent MongoDB:', embeddedErr);
-        throw embeddedErr;
+      } catch (directErr: any) {
+        console.warn(`⚠ Direct Atlas connection failed (${directErr.message}). Trying SRV URI.`);
       }
+
+      // 3. SRV Atlas connection attempt
+      try {
+        const conn = await mongoose.connect(SRV_ATLAS_URI, {
+          serverSelectionTimeoutMS: 6000,
+        });
+        console.log(`✔ Connected to MongoDB Atlas (SRV): civicsplus`);
+        await seedControllerAdmin();
+        return conn;
+      } catch (srvErr: any) {
+        console.warn(`⚠ SRV Atlas connection failed (${srvErr.message}).`);
+      }
+
+      // 4. Fallback: Embedded MongoDB (Only on local machine, never on Vercel/serverless)
+      if (!process.env.VERCEL) {
+        try {
+          const { MongoMemoryServer } = await import('mongodb-memory-server');
+          if (!global.mongoMemoryServerInstance) {
+            const persistentDbDir = path.resolve(__dirname, '../../data/mongodb_data');
+            if (!fs.existsSync(persistentDbDir)) {
+              fs.mkdirSync(persistentDbDir, { recursive: true });
+            }
+
+            global.mongoMemoryServerInstance = await MongoMemoryServer.create({
+              instance: {
+                dbPath: persistentDbDir,
+                storageEngine: 'wiredTiger',
+                dbName: 'civicsplus',
+              },
+            });
+          }
+
+          const embeddedUri = global.mongoMemoryServerInstance.getUri('civicsplus');
+          const conn = await mongoose.connect(embeddedUri);
+          console.log(`✔ Connected to Persistent Local MongoDB (WiredTiger on-disk) at: ${embeddedUri}`);
+          await seedControllerAdmin();
+          return conn;
+        } catch (embeddedErr: any) {
+          console.error('CRITICAL: Failed to initialize persistent MongoDB:', embeddedErr);
+          throw embeddedErr;
+        }
+      }
+
+      throw new Error('Could not connect to MongoDB Atlas and local fallback is disabled on Vercel.');
     })();
   }
 

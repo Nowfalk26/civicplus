@@ -2,7 +2,7 @@
   "name": "civicsplus-backend",
   "version": "1.0.0",
   "description": "Civics Plus Civic Complaint Platform Backend for Tamil Nadu",
-  "main": "dist/server.js",
+  "main": "index.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "prisma generate && tsc",

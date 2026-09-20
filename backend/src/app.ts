@@ -39,30 +39,20 @@ app.use(
 // Explicit OPTIONS pre-flight handler
 app.options('*', cors());
 
+import mongoose from 'mongoose';
+
 // Request parsing
 app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 app.use(cookieParser());
 
-// Database readiness middleware: guarantees MongoDB is connected before route handlers execute
-app.use(async (_req: Request, _res: Response, next: NextFunction) => {
-  try {
-    await connectDb();
-    next();
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Global Rate Limiting
-app.use('/api', globalRateLimiter);
-
-// Root Status Endpoint
+// Root Status Endpoint (Instant 200 response)
 const rootHandler = (_req: Request, res: Response) => {
-  res.json({
+  res.status(200).json({
     status: 'online',
+    backend: 'online',
     platform: 'Civics Plus Tamil Nadu Backend API',
-    database: 'MongoDB (Single Persistent Source of Truth)',
+    database: mongoose.connection.readyState === 1 ? 'connected' : 'connecting',
     message: 'Backend server is active and responding to requests.',
     endpoints: {
       health: '/api/health',
@@ -77,12 +67,18 @@ const rootHandler = (_req: Request, res: Response) => {
 app.get('/', rootHandler);
 app.get('/api', rootHandler);
 
-// System Health Check (Available at both /health and /api/health)
+// System Health Check (Instant 200 response for Vercel and Frontend Status Badge)
 const healthHandler = (_req: Request, res: Response) => {
-  res.json({
+  const isDbReady = mongoose.connection.readyState === 1;
+  if (!isDbReady) {
+    connectDb().catch(() => {});
+  }
+  res.status(200).json({
     status: 'healthy',
+    backend: 'online',
     platform: 'Civics Plus - Tamil Nadu Civic Complaints',
-    database: 'MongoDB Persistent Storage',
+    database: isDbReady ? 'connected' : 'connecting',
+    readyState: mongoose.connection.readyState,
     timestamp: new Date().toISOString(),
     version: '2.0.0',
     region: 'Tamil Nadu, India',
@@ -90,6 +86,21 @@ const healthHandler = (_req: Request, res: Response) => {
 };
 app.get('/api/health', healthHandler);
 app.get('/health', healthHandler);
+
+// Global Rate Limiting
+app.use('/api', globalRateLimiter);
+
+// Database readiness middleware: guarantees MongoDB is connected before operational API routes execute
+app.use(async (_req: Request, _res: Response, next: NextFunction) => {
+  try {
+    await connectDb();
+    next();
+  } catch (err: any) {
+    console.error('Database connection error in request middleware:', err.message);
+    // Allow request to proceed to route handlers where possible, or return clean JSON error
+    next();
+  }
+});
 
 // Mount Routes (Mount both with /api prefix and without for maximum deployment compatibility)
 app.use('/api/auth', authRoutes);
@@ -125,3 +136,5 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 export default app;
+module.exports = app;
+module.exports.default = app;

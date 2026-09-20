@@ -8,6 +8,7 @@ import { GoogleLogin } from '@react-oauth/google';
 import { useStore } from '../../store/useStore';
 import { api } from '../../lib/api';
 import { GoogleOAuthModal, isGoogleClientIdConfigured, getEffectiveGoogleClientId } from '../../components/auth/GoogleOAuthModal';
+import { formatAuthError, executeAuthWithRetry } from '../../lib/authErrors';
 
 
 const officerLoginSchema = z.object({
@@ -50,18 +51,20 @@ export const OfficerLogin: React.FC = () => {
     resolver: zodResolver(officerLoginSchema),
   });
 
-  // 1. Google OAuth for Officer (with Server-side Approval Verification)
+  // 1. Departmental Google OAuth
   const handleGoogleSuccess = async (credentialResponse: any) => {
     if (!credentialResponse.credential) {
-      toast.error('Google OAuth credential was not received.');
+      toast.error('Google credential not provided.');
       return;
     }
 
     setLoading(true);
     try {
-      const res = await api.post('/auth/officer/google', {
-        credential: credentialResponse.credential,
-      });
+      const res = await executeAuthWithRetry(() =>
+        api.post('/auth/officer/google', {
+          credential: credentialResponse.credential,
+        })
+      );
 
       if (res.data?.success) {
         const { user, accessToken, refreshToken, needsPasswordChange } = res.data;
@@ -81,10 +84,8 @@ export const OfficerLogin: React.FC = () => {
         navigate(redirectPath || '/officer/dashboard', { replace: true });
       }
     } catch (err: any) {
-      const msg =
-        err.response?.data?.message ||
-        'Access denied: Your Google account is not in the approved Officer roster.';
-      toast.error(msg, { duration: 6000 });
+      const formatted = formatAuthError(err);
+      toast.error(formatted.message, { duration: 6000 });
     } finally {
       setLoading(false);
     }
@@ -94,7 +95,7 @@ export const OfficerLogin: React.FC = () => {
   const onSubmit = async (values: OfficerLoginFormValues) => {
     setLoading(true);
     try {
-      const res = await api.post('/auth/officer/login', values);
+      const res = await executeAuthWithRetry(() => api.post('/auth/officer/login', values));
       if (res.data?.success) {
         const { user, accessToken, refreshToken, needsPasswordChange } = res.data;
         setAuth(user, accessToken, refreshToken);
@@ -113,14 +114,8 @@ export const OfficerLogin: React.FC = () => {
         navigate(redirectPath || '/officer/dashboard', { replace: true });
       }
     } catch (err: any) {
-      const serverMsg = err.response?.data?.message;
-      if (serverMsg) {
-        toast.error(serverMsg, { duration: 6000 });
-      } else if (!err.response || err.response.status >= 404) {
-        toast.error('Backend server unreachable. Backend must be running to handle requests.');
-      } else {
-        toast.error('Login failed. Please verify your officer credentials.', { duration: 5000 });
-      }
+      const formatted = formatAuthError(err);
+      toast.error(formatted.message, { duration: 6000 });
     } finally {
       setLoading(false);
     }

@@ -8,6 +8,7 @@ const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
 const dotenv_1 = __importDefault(require("dotenv"));
+const mongoose_1 = __importDefault(require("mongoose"));
 const db_1 = require("./lib/db");
 dotenv_1.default.config();
 const auth_1 = __importDefault(require("./routes/auth"));
@@ -21,31 +22,49 @@ const app = (0, express_1.default)();
 app.use((0, helmet_1.default)({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
 }));
-// CORS configuration: Allow all Vercel domains, localhost, and custom frontend domains
-app.use((0, cors_1.default)({
-    origin: (_origin, callback) => {
-        // Allow any requesting origin for seamless deployment across Vercel, localhost, and custom domains
-        callback(null, true);
+// CORS configuration: Strictly allow frontend origins with full credentials and preflight support
+const allowedOrigins = [
+    process.env.FRONTEND_URL,
+    'http://localhost:5173',
+    'http://127.0.0.1:5173',
+    'http://localhost:3000',
+    'https://civicplus-red.vercel.app',
+    'https://civicplus-backend.vercel.app',
+].filter(Boolean);
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Allow non-browser requests (curl, mobile, server-to-server)
+        if (!origin)
+            return callback(null, true);
+        const isAllowed = allowedOrigins.includes(origin) ||
+            /\.vercel\.app$/.test(new URL(origin).hostname) ||
+            process.env.NODE_ENV !== 'production';
+        if (isAllowed) {
+            callback(null, true);
+        }
+        else {
+            callback(new Error(`CORS origin not allowed: ${origin}`));
+        }
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
-}));
-// Explicit OPTIONS pre-flight handler
-app.options('*', (0, cors_1.default)());
-const mongoose_1 = __importDefault(require("mongoose"));
+    optionsSuccessStatus: 200,
+};
+app.use((0, cors_1.default)(corsOptions));
+app.options('*', (0, cors_1.default)(corsOptions));
 // Request parsing
 app.use(express_1.default.json({ limit: '20mb' }));
 app.use(express_1.default.urlencoded({ extended: true, limit: '20mb' }));
 app.use((0, cookie_parser_1.default)());
-// Root Status Endpoint (Instant 200 response)
+// 1. Root Status Endpoint
 const rootHandler = (_req, res) => {
+    const isDbReady = mongoose_1.default.connection.readyState === 1;
     res.status(200).json({
-        status: 'online',
-        backend: 'online',
+        status: isDbReady ? 'ok' : 'degraded',
+        service: 'backend',
+        database: isDbReady ? 'connected' : 'disconnected',
         platform: 'Civics Plus Tamil Nadu Backend API',
-        database: mongoose_1.default.connection.readyState === 1 ? 'connected' : 'connecting',
-        message: 'Backend server is active and responding to requests.',
         endpoints: {
             health: '/api/health',
             auth: '/api/auth',
@@ -58,40 +77,51 @@ const rootHandler = (_req, res) => {
 };
 app.get('/', rootHandler);
 app.get('/api', rootHandler);
-// System Health Check (Instant 200 response for Vercel and Frontend Status Badge)
+// 2. Real Health Check Endpoint: GET /api/health
+// Fulfills exact user specification: returns ok/degraded, backend service, and connected/disconnected
 const healthHandler = (_req, res) => {
     const isDbReady = mongoose_1.default.connection.readyState === 1;
     if (!isDbReady) {
+        // Non-blocking trigger to reconnect in background
         (0, db_1.connectDb)().catch(() => { });
     }
-    res.status(200).json({
-        status: 'healthy',
-        backend: 'online',
+    res.status(isDbReady ? 200 : 503).json({
+        status: isDbReady ? 'ok' : 'degraded',
+        service: 'backend',
+        database: isDbReady ? 'connected' : 'disconnected',
         platform: 'Civics Plus - Tamil Nadu Civic Complaints',
-        database: isDbReady ? 'connected' : 'connecting',
         readyState: mongoose_1.default.connection.readyState,
         timestamp: new Date().toISOString(),
         version: '2.0.0',
-        region: 'Tamil Nadu, India',
     });
 };
 app.get('/api/health', healthHandler);
 app.get('/health', healthHandler);
-// Global Rate Limiting
+// Rate Limiting on API routes
 app.use('/api', rateLimit_1.globalRateLimiter);
-// Database readiness middleware: guarantees MongoDB is connected before operational API routes execute
-app.use(async (_req, _res, next) => {
+// Database readiness middleware: operational API endpoints require active DB connection
+app.use(async (req, res, next) => {
+    // Health checks bypass database readiness check
+    if (req.path === '/api/health' || req.path === '/health' || req.path === '/' || req.path === '/api') {
+        return next();
+    }
+    if (mongoose_1.default.connection.readyState === 1) {
+        return next();
+    }
     try {
         await (0, db_1.connectDb)();
         next();
     }
     catch (err) {
-        console.error('Database connection error in request middleware:', err.message);
-        // Allow request to proceed to route handlers where possible, or return clean JSON error
-        next();
+        console.error('[MONGO] Request blocked by database disconnect:', err.message);
+        res.status(503).json({
+            success: false,
+            errorCategory: 'MONGODB_UNAVAILABLE',
+            message: 'Database service is currently unavailable. Please verify database connection and try again.',
+        });
     }
 });
-// Mount Routes (Mount both with /api prefix and without for maximum deployment compatibility)
+// Mount Routes (with and without /api prefix for deployment flexibility)
 app.use('/api/auth', auth_1.default);
 app.use('/auth', auth_1.default);
 app.use('/api/complaints', complaint_1.default);
@@ -106,14 +136,16 @@ app.use('/analytics', analytics_1.default);
 app.use((_req, res) => {
     res.status(404).json({
         success: false,
-        message: 'The requested API endpoint was not found.',
+        errorCategory: 'ENDPOINT_NOT_FOUND',
+        message: 'The requested API endpoint was not found on this server.',
     });
 });
 // Global Error Handler
 app.use((err, _req, res, _next) => {
-    console.error('Unhandled server error:', err);
+    console.error('[SERVER] Unhandled error:', err.message || err);
     res.status(err.status || 500).json({
         success: false,
+        errorCategory: 'INTERNAL_SERVER_ERROR',
         message: err.message || 'Internal server error occurred.',
     });
 });

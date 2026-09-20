@@ -7,10 +7,11 @@ import toast from 'react-hot-toast';
 import { useStore } from '../../store/useStore';
 import { api } from '../../lib/api';
 import { Modal } from '../../components/ui/Modal';
+import { formatAuthError, executeAuthWithRetry } from '../../lib/authErrors';
 
 const employeeLoginSchema = z.object({
-  identifier: z.string().min(1, 'Please enter your Employee ID, Official Email, or Mobile number'),
-  password: z.string().min(6, 'Password must be at least 6 characters'),
+  identifier: z.string().min(1, 'Employee ID, Official Email, or Phone is required'),
+  password: z.string().min(1, 'Password is required'),
 });
 
 type EmployeeLoginFormValues = z.infer<typeof employeeLoginSchema>;
@@ -42,7 +43,7 @@ export const EmployeeLogin: React.FC = () => {
   const onSubmit = async (values: EmployeeLoginFormValues) => {
     setLoading(true);
     try {
-      const res = await api.post('/auth/employee/login', values);
+      const res = await executeAuthWithRetry(() => api.post('/auth/employee/login', values));
       if (res.data?.success) {
         const { user, accessToken, refreshToken, mustChangePassword } = res.data;
         setAuth(user, accessToken, refreshToken);
@@ -69,12 +70,8 @@ export const EmployeeLogin: React.FC = () => {
         navigate(redirectPath || '/employee/dashboard', { replace: true });
       }
     } catch (err: any) {
-      const msg =
-        err.response?.data?.message ||
-        (language === 'en'
-          ? 'Invalid credentials. Check your Employee ID/Email and password.'
-          : 'தவறான நற்சான்றிதழ்கள். பணியாளர் எண் மற்றும் கடவுச்சொல்லை சரிபார்க்கவும்.');
-      toast.error(msg);
+      const formatted = formatAuthError(err);
+      toast.error(formatted.message);
     } finally {
       setLoading(false);
     }

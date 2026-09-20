@@ -193,37 +193,47 @@ exports.authController = {
             await (0, db_1.connectDb)();
             const validation = loginSchema.safeParse(req.body);
             if (!validation.success) {
+                console.warn('[AUTH] Login failed: CIVIC (validation error)');
                 res.status(400).json({
                     success: false,
+                    errorCategory: 'INVALID_REQUEST',
                     errors: validation.error.errors.map((e) => e.message),
                 });
                 return;
             }
             const { identifier, password } = validation.data;
             const normalized = identifier.toLowerCase().trim();
+            console.log(`[AUTH] Login request received: CIVIC (${normalized})`);
             const user = await User_1.User.findOne({
                 $or: [{ email: normalized }, { phone: identifier.trim() }, { username: normalized }],
             }).select('+password');
+            console.log(`[AUTH] User lookup completed: CIVIC (${normalized})`);
             if (!user) {
-                res.status(401).json({ success: false, message: 'No Civic account found with these credentials.' });
+                console.warn(`[AUTH] Login failed: CIVIC (${normalized}) - Reason: Account not found`);
+                res.status(404).json({ success: false, errorCategory: 'ACCOUNT_NOT_FOUND', message: 'No Civic account found with these credentials.' });
                 return;
             }
             if (user.role !== 'CITIZEN') {
+                console.warn(`[AUTH] Login failed: CIVIC (${normalized}) - Reason: Non-citizen role`);
                 res.status(403).json({
                     success: false,
+                    errorCategory: 'ACCESS_DENIED',
                     message: 'This portal is strictly for Citizens / Civic users. Officers and Controllers must use their dedicated portals.',
                 });
                 return;
             }
             const isMatch = await bcryptjs_1.default.compare(password, user.password || '');
             if (!isMatch) {
-                res.status(401).json({ success: false, message: 'Invalid credentials. Password incorrect.' });
+                console.warn(`[AUTH] Login failed: CIVIC (${normalized}) - Reason: Invalid password`);
+                res.status(401).json({ success: false, errorCategory: 'INVALID_CREDENTIALS', message: 'Invalid credentials. Password incorrect.' });
                 return;
             }
             if (user.isBanned || user.accountStatus === 'SUSPENDED') {
-                res.status(403).json({ success: false, message: 'Your account is suspended.' });
+                console.warn(`[AUTH] Login failed: CIVIC (${normalized}) - Reason: Account suspended`);
+                res.status(403).json({ success: false, errorCategory: 'ACCOUNT_DISABLED', message: 'Your account is suspended.' });
                 return;
             }
+            console.log(`[AUTH] Authentication verified: CIVIC (${normalized})`);
             // Update presence
             user.isOnline = true;
             user.presenceStatus = 'ONLINE';
@@ -233,6 +243,7 @@ exports.authController = {
             await user.save();
             const accessToken = (0, auth_1.generateAccessToken)({ userId: user.id, email: user.email, role: user.role });
             const refreshToken = (0, auth_1.generateRefreshToken)({ userId: user.id, email: user.email, role: user.role });
+            console.log(`[AUTH] Login successful: CIVIC (${user.accountNumber})`);
             res.json({
                 success: true,
                 message: 'Civic login successful.',
@@ -242,7 +253,8 @@ exports.authController = {
             });
         }
         catch (error) {
-            res.status(500).json({ success: false, message: 'Error during civic login.' });
+            console.error('[AUTH] Login failed: CIVIC - Reason:', error.message || error);
+            res.status(500).json({ success: false, errorCategory: 'SERVER_ERROR', message: error.message || 'Error during civic login.' });
         }
     },
     // POST /api/auth/civic/google (Stable permanent identity)
@@ -252,27 +264,32 @@ exports.authController = {
             const { credential, idToken } = req.body;
             const token = credential || idToken;
             if (!token) {
-                res.status(400).json({ success: false, message: 'Google OAuth credential / ID token is required.' });
+                console.warn('[AUTH] Login failed: CIVIC GOOGLE (missing token)');
+                res.status(400).json({ success: false, errorCategory: 'MISSING_CREDENTIALS', message: 'Google OAuth credential / ID token is required.' });
                 return;
             }
             // Cryptographically verify Google token
             const googleUser = await authProvider_1.authProviderService.verifyGoogleToken(token);
             const email = googleUser.email.toLowerCase().trim();
             const stableAuthId = googleUser.googleId;
+            console.log(`[AUTH] Login request received: CIVIC GOOGLE (${email})`);
             // 1. Stable lookup: Find existing MongoDB User by stable authProviderUserId OR verified email
             let user = await User_1.User.findOne({
                 $or: [{ authProviderUserId: stableAuthId }, { email }],
             });
+            console.log(`[AUTH] User lookup completed: CIVIC GOOGLE (${email})`);
             if (user && user.role !== 'CITIZEN') {
+                console.warn(`[AUTH] Login failed: CIVIC GOOGLE (${email}) - Reason: Administrative role`);
                 res.status(403).json({
                     success: false,
+                    errorCategory: 'ACCESS_DENIED',
                     message: 'This Google account is registered under an administrative or officer role. Use the official officer/controller portal.',
                 });
                 return;
             }
             if (user) {
                 // Account exists! REUSE the same permanent user and update session/presence
-                user.authProviderUserId = stableAuthId; // Ensure stable ID is linked
+                user.authProviderUserId = stableAuthId;
                 user.isOnline = true;
                 user.presenceStatus = 'ONLINE';
                 user.lastLoginAt = new Date();
@@ -282,7 +299,7 @@ exports.authController = {
                     user.avatarUrl = googleUser.avatarUrl;
                 }
                 await user.save();
-                console.log(`[AUTH-GOOGLE] Reused existing permanent account: ${user.email} (${user.accountNumber})`);
+                console.log(`[AUTH] Reused existing permanent account: ${user.email} (${user.accountNumber})`);
             }
             else {
                 // First login: CREATE ONE permanent MongoDB User record
@@ -309,12 +326,14 @@ exports.authController = {
                     lastSeenAt: new Date(),
                     successfulLoginCount: 1,
                 });
-                console.log(`[AUTH-GOOGLE] Created ONE permanent MongoDB account: ${user.email} (${user.accountNumber})`);
+                console.log(`[AUTH] Created ONE permanent MongoDB account: ${user.email} (${user.accountNumber})`);
             }
             if (user.isBanned || user.accountStatus === 'SUSPENDED') {
-                res.status(403).json({ success: false, message: 'Account is currently suspended.' });
+                console.warn(`[AUTH] Login failed: CIVIC GOOGLE (${email}) - Reason: Account suspended`);
+                res.status(403).json({ success: false, errorCategory: 'ACCOUNT_DISABLED', message: 'Account is currently suspended.' });
                 return;
             }
+            console.log(`[AUTH] Authentication verified: CIVIC GOOGLE (${email})`);
             const accessToken = (0, auth_1.generateAccessToken)({ userId: user.id, email: user.email, role: user.role });
             const refreshToken = (0, auth_1.generateRefreshToken)({ userId: user.id, email: user.email, role: user.role });
             res.cookie('accessToken', accessToken, {
@@ -329,6 +348,7 @@ exports.authController = {
                 sameSite: 'lax',
                 maxAge: 7 * 24 * 60 * 60 * 1000,
             });
+            console.log(`[AUTH] Login successful: CIVIC GOOGLE (${user.accountNumber})`);
             res.json({
                 success: true,
                 message: 'Google authentication verified successfully.',
@@ -338,8 +358,8 @@ exports.authController = {
             });
         }
         catch (error) {
-            console.error('[GOOGLE-AUTH] Civic Google verification error:', error.message);
-            res.status(401).json({ success: false, message: error.message || 'Google authentication error.' });
+            console.error('[AUTH] Login failed: CIVIC GOOGLE - Reason:', error.message || error);
+            res.status(401).json({ success: false, errorCategory: 'AUTH_PROVIDER_FAILURE', message: error.message || 'Google authentication error.' });
         }
     },
     // POST /api/auth/civic/mobile/send-otp
@@ -457,17 +477,21 @@ exports.authController = {
             const identifier = req.body.identifier || req.body.email;
             const { password } = req.body;
             if (!identifier || !password) {
-                res.status(400).json({ success: false, message: 'Controller email/ID and password are required.' });
+                console.warn('[AUTH] Login failed: CONTROLLER (missing credentials)');
+                res.status(400).json({ success: false, errorCategory: 'MISSING_CREDENTIALS', message: 'Controller email/ID and password are required.' });
                 return;
             }
             const normalizedIdentifier = identifier.trim().toLowerCase();
+            console.log(`[AUTH] Login request received: CONTROLLER (${normalizedIdentifier})`);
             // Enforce the designated State Controller accounts
             const isAllowedController = normalizedIdentifier === 'nowfal@gmail.com' ||
                 normalizedIdentifier === 'nowfal' ||
                 normalizedIdentifier === 'admin@civicplus.tn.gov.in';
             if (!isAllowedController) {
+                console.warn(`[AUTH] Login failed: CONTROLLER (${normalizedIdentifier}) - Reason: Unauthorized Controller ID`);
                 res.status(403).json({
                     success: false,
+                    errorCategory: 'ACCESS_DENIED',
                     message: 'Access denied. Only the designated State Controller account (nowfal@gmail.com) can access this portal.',
                 });
                 return;
@@ -476,15 +500,19 @@ exports.authController = {
                 $or: [{ email: normalizedIdentifier }, { username: normalizedIdentifier }],
                 role: 'ADMIN',
             }).select('+password');
+            console.log(`[AUTH] User lookup completed: CONTROLLER (${normalizedIdentifier})`);
             if (!user) {
-                res.status(401).json({ success: false, message: 'Access denied. Controller account not found.' });
+                console.warn(`[AUTH] Login failed: CONTROLLER (${normalizedIdentifier}) - Reason: Account not found`);
+                res.status(404).json({ success: false, errorCategory: 'ACCOUNT_NOT_FOUND', message: 'Access denied. Controller account not found.' });
                 return;
             }
             const isMatch = await bcryptjs_1.default.compare(password, user.password || '');
             if (!isMatch) {
-                res.status(401).json({ success: false, message: 'Access denied. Invalid Controller password.' });
+                console.warn(`[AUTH] Login failed: CONTROLLER (${normalizedIdentifier}) - Reason: Invalid password`);
+                res.status(401).json({ success: false, errorCategory: 'INVALID_CREDENTIALS', message: 'Access denied. Invalid Controller password.' });
                 return;
             }
+            console.log(`[AUTH] Authentication verified: CONTROLLER (${normalizedIdentifier})`);
             user.isOnline = true;
             user.presenceStatus = 'ONLINE';
             user.lastLoginAt = new Date();
@@ -505,6 +533,7 @@ exports.authController = {
                 sameSite: 'lax',
                 maxAge: 7 * 24 * 60 * 60 * 1000,
             });
+            console.log(`[AUTH] Login successful: CONTROLLER (${user.accountNumber})`);
             res.json({
                 success: true,
                 message: 'Controller authentication verified. Welcome, Chief Civic Controller.',
@@ -514,7 +543,8 @@ exports.authController = {
             });
         }
         catch (error) {
-            res.status(500).json({ success: false, message: 'Controller login error.' });
+            console.error('[AUTH] Login failed: CONTROLLER - Reason:', error.message || error);
+            res.status(500).json({ success: false, errorCategory: 'SERVER_ERROR', message: error.message || 'Controller login error.' });
         }
     },
     // POST /api/auth/officer/request-access
@@ -616,14 +646,19 @@ exports.authController = {
             await (0, db_1.connectDb)();
             const { email, password } = req.body;
             if (!email || !password) {
-                res.status(400).json({ success: false, message: 'Approved officer email and password are required.' });
+                console.warn('[AUTH] Login failed: OFFICER (missing credentials)');
+                res.status(400).json({ success: false, errorCategory: 'MISSING_CREDENTIALS', message: 'Approved officer email and password are required.' });
                 return;
             }
             const normalizedEmail = email.toLowerCase().trim();
+            console.log(`[AUTH] Login request received: OFFICER (${normalizedEmail})`);
             const user = await User_1.User.findOne({ email: normalizedEmail, role: 'OFFICER' }).select('+password');
+            console.log(`[AUTH] User lookup completed: OFFICER (${normalizedEmail})`);
             if (!user) {
-                res.status(401).json({
+                console.warn(`[AUTH] Login failed: OFFICER (${normalizedEmail}) - Reason: Account not found`);
+                res.status(404).json({
                     success: false,
+                    errorCategory: 'ACCOUNT_NOT_FOUND',
                     message: 'Officer account not found. If you are a departmental officer, please submit an Access Request first.',
                 });
                 return;
@@ -631,8 +666,10 @@ exports.authController = {
             // Check Controller approval status
             const isApproved = user.approvalStatus === 'APPROVED' && user.isApproved === true && !user.isBanned;
             if (!isApproved) {
+                console.warn(`[AUTH] Login failed: OFFICER (${normalizedEmail}) - Reason: Pending Controller approval`);
                 res.status(403).json({
                     success: false,
+                    errorCategory: 'OFFICER_NOT_APPROVED',
                     message: 'Your Officer account has not been approved by the Controller yet.',
                     isPending: true,
                     approvalStatus: user.approvalStatus || 'PENDING',
@@ -640,14 +677,17 @@ exports.authController = {
                 return;
             }
             if (user.accountStatus === 'SUSPENDED' || user.isBanned) {
-                res.status(403).json({ success: false, message: 'Your Officer account is currently suspended.' });
+                console.warn(`[AUTH] Login failed: OFFICER (${normalizedEmail}) - Reason: Account suspended`);
+                res.status(403).json({ success: false, errorCategory: 'ACCOUNT_DISABLED', message: 'Your Officer account is currently suspended.' });
                 return;
             }
             const isMatch = await bcryptjs_1.default.compare(password, user.password || '');
             if (!isMatch) {
-                res.status(401).json({ success: false, message: 'Invalid credentials. Password incorrect.' });
+                console.warn(`[AUTH] Login failed: OFFICER (${normalizedEmail}) - Reason: Password incorrect`);
+                res.status(401).json({ success: false, errorCategory: 'INVALID_CREDENTIALS', message: 'Invalid credentials. Password incorrect.' });
                 return;
             }
+            console.log(`[AUTH] Authentication verified: OFFICER (${normalizedEmail})`);
             // Update presence
             user.isOnline = true;
             user.presenceStatus = 'ONLINE';
@@ -657,6 +697,7 @@ exports.authController = {
             await user.save();
             const accessToken = (0, auth_1.generateAccessToken)({ userId: user.id, email: user.email, role: user.role });
             const refreshToken = (0, auth_1.generateRefreshToken)({ userId: user.id, email: user.email, role: user.role });
+            console.log(`[AUTH] Login successful: OFFICER (${user.accountNumber})`);
             res.json({
                 success: true,
                 message: 'Officer login successful.',
@@ -667,7 +708,8 @@ exports.authController = {
             });
         }
         catch (error) {
-            res.status(500).json({ success: false, message: 'Error during officer login.' });
+            console.error('[AUTH] Login failed: OFFICER - Reason:', error.message || error);
+            res.status(500).json({ success: false, errorCategory: 'SERVER_ERROR', message: error.message || 'Error during officer login.' });
         }
     },
     // POST /api/auth/officer/google
@@ -766,12 +808,14 @@ exports.authController = {
             await (0, db_1.connectDb)();
             const { identifier, password } = req.body;
             if (!identifier || !password) {
-                res.status(400).json({ success: false, message: 'Employee Email, Phone, or ID and password are required.' });
+                console.warn('[AUTH] Login failed: EMPLOYEE (missing credentials)');
+                res.status(400).json({ success: false, errorCategory: 'MISSING_CREDENTIALS', message: 'Employee Email, Phone, or ID and password are required.' });
                 return;
             }
             const trimmed = identifier.trim();
             const normalized = trimmed.toLowerCase();
             const cleanPhone = trimmed.replace(/\D/g, '');
+            console.log(`[AUTH] Login request received: EMPLOYEE (${normalized})`);
             // Find employee by email, employeeId, or phone
             const empRecord = await Employee_1.Employee.findOne({
                 $or: [
@@ -781,28 +825,35 @@ exports.authController = {
                     ...(cleanPhone.length >= 10 ? [{ phone: { $regex: cleanPhone.slice(-10) + '$' } }] : []),
                 ],
             });
+            console.log(`[AUTH] User lookup completed: EMPLOYEE (${empRecord?.employeeId || normalized})`);
             if (!empRecord) {
-                res.status(401).json({ success: false, message: 'Employee account not found.' });
+                console.warn(`[AUTH] Login failed: EMPLOYEE (${normalized}) - Reason: Employee record not found`);
+                res.status(404).json({ success: false, errorCategory: 'ACCOUNT_NOT_FOUND', message: 'Employee account not found.' });
                 return;
             }
             if (empRecord.accountStatus === 'DISABLED') {
-                res.status(403).json({ success: false, message: 'Employee account has been deactivated. Please contact your department officer.' });
+                console.warn(`[AUTH] Login failed: EMPLOYEE (${empRecord.employeeId}) - Reason: Account disabled`);
+                res.status(403).json({ success: false, errorCategory: 'ACCOUNT_DISABLED', message: 'Employee account has been deactivated. Please contact your department officer.' });
                 return;
             }
             const user = await User_1.User.findById(empRecord.userId).select('+password');
             if (!user) {
-                res.status(401).json({ success: false, message: 'Employee user credentials not found.' });
+                console.warn(`[AUTH] Login failed: EMPLOYEE (${empRecord.employeeId}) - Reason: User credentials record not found`);
+                res.status(404).json({ success: false, errorCategory: 'ACCOUNT_NOT_FOUND', message: 'Employee user credentials not found.' });
                 return;
             }
             if (user.accountStatus === 'SUSPENDED' || user.accountStatus === 'DISABLED' || user.isBanned) {
-                res.status(403).json({ success: false, message: 'Employee account is currently disabled.' });
+                console.warn(`[AUTH] Login failed: EMPLOYEE (${empRecord.employeeId}) - Reason: User account disabled`);
+                res.status(403).json({ success: false, errorCategory: 'ACCOUNT_DISABLED', message: 'Employee account is currently disabled.' });
                 return;
             }
             const isMatch = await bcryptjs_1.default.compare(password, user.password || '');
             if (!isMatch) {
-                res.status(401).json({ success: false, message: 'Invalid employee password.' });
+                console.warn(`[AUTH] Login failed: EMPLOYEE (${empRecord.employeeId}) - Reason: Password incorrect`);
+                res.status(401).json({ success: false, errorCategory: 'INVALID_CREDENTIALS', message: 'Invalid employee password.' });
                 return;
             }
+            console.log(`[AUTH] Authentication verified: EMPLOYEE (${empRecord.employeeId})`);
             user.isOnline = true;
             user.presenceStatus = 'ONLINE';
             user.lastLoginAt = new Date();
@@ -811,6 +862,7 @@ exports.authController = {
             await user.save();
             const accessToken = (0, auth_1.generateAccessToken)({ userId: user.id, email: user.email, role: 'EMPLOYEE' });
             const refreshToken = (0, auth_1.generateRefreshToken)({ userId: user.id, email: user.email, role: 'EMPLOYEE' });
+            console.log(`[AUTH] Login successful: EMPLOYEE (${empRecord.employeeId})`);
             res.cookie('accessToken', accessToken, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',

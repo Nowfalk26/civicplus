@@ -4,21 +4,28 @@ import { Modal } from './Modal';
 import toast from 'react-hot-toast';
 
 export const BackendStatusBadge: React.FC = () => {
-  const [status, setStatus] = useState<'checking' | 'online' | 'offline'>('checking');
+  const [status, setStatus] = useState<'checking' | 'online' | 'degraded' | 'offline'>('checking');
+  const [dbStatus, setDbStatus] = useState<'connected' | 'disconnected' | 'connecting' | 'unknown'>('unknown');
   const [latency, setLatency] = useState<number | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [customInput, setCustomInput] = useState('');
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; latency?: number } | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string; latency?: number; data?: any } | null>(null);
 
   const checkStatus = async () => {
     setStatus('checking');
     const res = await pingBackendHealth();
     if (res.ok) {
       setStatus('online');
+      setDbStatus('connected');
+      setLatency(res.latency);
+    } else if (res.data?.status === 'degraded' || res.data?.database === 'disconnected' || res.data?.database === 'connecting') {
+      setStatus('degraded');
+      setDbStatus(res.data?.database || 'disconnected');
       setLatency(res.latency);
     } else {
       setStatus('offline');
+      setDbStatus('disconnected');
       setLatency(null);
     }
   };
@@ -44,7 +51,7 @@ export const BackendStatusBadge: React.FC = () => {
       if (res.ok) {
         toast.success(`Server reachable! Latency: ${res.latency}ms`);
       } else {
-        toast.error(`Unreachable: ${res.message}`);
+        toast.error(`Health status: ${res.message}`);
       }
     } finally {
       setTesting(false);
@@ -77,6 +84,8 @@ export const BackendStatusBadge: React.FC = () => {
           className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] font-bold border shadow-md transition-all backdrop-blur-md ${
             status === 'online'
               ? 'bg-emerald-950/90 text-emerald-300 border-emerald-700/60 hover:bg-emerald-900'
+              : status === 'degraded'
+              ? 'bg-amber-950/90 text-amber-300 border-amber-700/60 hover:bg-amber-900'
               : status === 'checking'
               ? 'bg-slate-900/90 text-slate-300 border-slate-700/60 hover:bg-slate-800'
               : 'bg-red-950/90 text-red-300 border-red-700/60 hover:bg-red-900 animate-pulse'
@@ -87,17 +96,21 @@ export const BackendStatusBadge: React.FC = () => {
             className={`w-2 h-2 rounded-full ${
               status === 'online'
                 ? 'bg-emerald-400 shadow-xs shadow-emerald-400'
+                : status === 'degraded'
+                ? 'bg-amber-400 shadow-xs shadow-amber-400 animate-pulse'
                 : status === 'checking'
-                ? 'bg-amber-400 animate-spin'
+                ? 'bg-blue-400 animate-spin'
                 : 'bg-red-500'
             }`}
           />
           <span>
             {status === 'online'
-              ? `Backend Online (${latency}ms)`
+              ? `Backend & DB Online (${latency}ms)`
+              : status === 'degraded'
+              ? `Backend Online • DB ${dbStatus} (${latency}ms)`
               : status === 'checking'
               ? 'Checking Backend...'
-              : 'Backend Unreachable (Click to Fix)'}
+              : 'Backend Offline (Click to Fix)'}
           </span>
           <span className="material-symbols-outlined text-[14px]">settings</span>
         </button>
@@ -107,37 +120,64 @@ export const BackendStatusBadge: React.FC = () => {
       <Modal
         isOpen={isOpen}
         onClose={() => setIsOpen(false)}
-        title="Backend Server & Database Connection"
+        title="Backend Server & Database Diagnostics"
       >
         <div className="space-y-4 text-xs">
+          {/* Diagnostic Info Grid */}
+          <div className="grid grid-cols-2 gap-2 p-3 rounded-2xl bg-surface-container border border-outline-variant font-mono text-[11px]">
+            <div>
+              <span className="text-on-surface-variant block text-[10px] uppercase font-bold">Frontend Origin:</span>
+              <span className="text-on-surface font-semibold truncate block">{typeof window !== 'undefined' ? window.location.origin : 'N/A'}</span>
+            </div>
+            <div>
+              <span className="text-on-surface-variant block text-[10px] uppercase font-bold">Backend API URL:</span>
+              <span className="text-on-surface font-semibold truncate block">{API_URL}</span>
+            </div>
+            <div>
+              <span className="text-on-surface-variant block text-[10px] uppercase font-bold">Backend Service:</span>
+              <span className={`font-semibold ${status === 'online' || status === 'degraded' ? 'text-emerald-600' : 'text-red-600'}`}>
+                {status === 'online' || status === 'degraded' ? 'ONLINE (HTTP 200)' : 'UNREACHABLE'}
+              </span>
+            </div>
+            <div>
+              <span className="text-on-surface-variant block text-[10px] uppercase font-bold">Database Status:</span>
+              <span className={`font-semibold ${dbStatus === 'connected' ? 'text-emerald-600' : dbStatus === 'connecting' ? 'text-amber-600' : 'text-red-600'}`}>
+                {dbStatus.toUpperCase()}
+              </span>
+            </div>
+          </div>
+
           {/* Current Status Box */}
           <div
             className={`p-3.5 rounded-2xl border flex items-start gap-3 ${
               status === 'online'
                 ? 'bg-emerald-50 border-emerald-200 text-emerald-950'
+                : status === 'degraded'
+                ? 'bg-amber-50 border-amber-200 text-amber-950'
                 : 'bg-red-50 border-red-200 text-red-950'
             }`}
           >
             <span
               className={`material-symbols-outlined text-[24px] shrink-0 mt-0.5 ${
-                status === 'online' ? 'text-emerald-600' : 'text-red-600'
+                status === 'online' ? 'text-emerald-600' : status === 'degraded' ? 'text-amber-600' : 'text-red-600'
               }`}
             >
-              {status === 'online' ? 'cloud_done' : 'cloud_off'}
+              {status === 'online' ? 'cloud_done' : status === 'degraded' ? 'cloud_sync' : 'cloud_off'}
             </span>
             <div className="space-y-1">
               <p className="font-bold text-sm">
                 {status === 'online'
-                  ? 'Backend Server Connected'
+                  ? 'Backend & Database Connected'
+                  : status === 'degraded'
+                  ? 'Backend Online • Database Reconnecting'
                   : 'Backend Server Is Unreachable'}
               </p>
               <p className="text-[11px] leading-relaxed opacity-90">
                 {status === 'online'
-                  ? 'All authentication, civic complaints, and field verification queries are communicating with MongoDB Atlas in real-time.'
-                  : 'The frontend cannot reach your backend API. If deployed on Vercel, verify your backend URL below or enter your deployed backend endpoint.'}
-              </p>
-              <p className="text-[10px] font-mono opacity-80 pt-0.5">
-                Active Endpoint: <strong>{API_URL}</strong>
+                  ? 'Authentication, civic complaints, and field verification queries are communicating with MongoDB Atlas.'
+                  : status === 'degraded'
+                  ? 'Backend is responding to requests, but database connection is reconnecting. Ensure IP is whitelisted in MongoDB Atlas.'
+                  : 'The frontend cannot reach your backend API. Verify the configured endpoint below.'}
               </p>
             </div>
           </div>

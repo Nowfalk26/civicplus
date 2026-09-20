@@ -6,6 +6,7 @@ import { z } from 'zod';
 import toast from 'react-hot-toast';
 import { useStore } from '../../store/useStore';
 import { api } from '../../lib/api';
+import { formatAuthError, executeAuthWithRetry } from '../../lib/authErrors';
 
 const controllerLoginSchema = z.object({
   identifier: z.string().min(1, 'Controller Email or Official ID is required'),
@@ -32,7 +33,7 @@ export const ControllerLogin: React.FC = () => {
   const onSubmit = async (values: ControllerLoginFormValues) => {
     setLoading(true);
     try {
-      const res = await api.post('/auth/controller/login', values);
+      const res = await executeAuthWithRetry(() => api.post('/auth/controller/login', values));
       if (res.data?.success) {
         const { user, accessToken, refreshToken } = res.data;
         setAuth(user, accessToken, refreshToken);
@@ -42,14 +43,8 @@ export const ControllerLogin: React.FC = () => {
         navigate(redirectPath || '/admin/dashboard', { replace: true });
       }
     } catch (err: any) {
-      const serverMsg = err.response?.data?.message;
-      if (serverMsg) {
-        toast.error(serverMsg);
-      } else if (!err.response || err.response.status === 404 || err.response.status === 405) {
-        toast.error('Backend server unreachable. Backend must be deployed to handle requests.');
-      } else {
-        toast.error('Access Denied: Controller verification failed.');
-      }
+      const formatted = formatAuthError(err);
+      toast.error(formatted.message);
     } finally {
       setLoading(false);
     }

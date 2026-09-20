@@ -1,10 +1,12 @@
 import axios from 'axios';
 
-// Production backend URL (separate Vercel project that is already live and working)
-const PRODUCTION_BACKEND_URL = 'https://civicplus-backend.vercel.app/api';
-
+/**
+ * Centralized API Base URL Resolver
+ * Strictly avoids hardcoded production or development URLs in source code.
+ * Reads from centralized environment variables (VITE_API_URL), diagnostics override, or relative origin.
+ */
 export const getBaseUrl = (): string => {
-  // 1. Check custom override in localStorage (configured via UI modal)
+  // 1. Diagnostics/Custom override in localStorage (configured via UI modal)
   if (typeof window !== 'undefined') {
     const customUrl = localStorage.getItem('civics_backend_url');
     if (customUrl && customUrl.trim().length > 0) {
@@ -13,35 +15,34 @@ export const getBaseUrl = (): string => {
     }
   }
 
-  // 2. Check build-time environment variable VITE_API_URL
+  // 2. Centralized environment variable VITE_API_URL
   const envUrl = (import.meta as unknown as { env: { VITE_API_URL?: string } }).env?.VITE_API_URL;
-  if (envUrl && envUrl.startsWith('http') && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+  if (envUrl && typeof envUrl === 'string' && envUrl.trim().length > 0) {
     const clean = envUrl.trim().replace(/\/+$/, '');
+    // Safety check: If running in production browser on a remote domain, ignore accidental localhost env var
+    if (typeof window !== 'undefined') {
+      const isRemote = window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1';
+      if (isRemote && (clean.includes('localhost') || clean.includes('127.0.0.1'))) {
+        return `${window.location.origin}/api`;
+      }
+    }
     return clean.endsWith('/api') ? clean : `${clean}/api`;
   }
 
-  // 3. Localhost / Private local network — use local backend
+  // 3. Fallback based on browser environment
   if (typeof window !== 'undefined') {
-    const h = window.location.hostname;
     const isLocal =
-      h === 'localhost' ||
-      h === '127.0.0.1' ||
-      h.startsWith('192.168.') ||
-      h.startsWith('10.') ||
-      h.startsWith('172.') ||
-      h.endsWith('.local');
+      window.location.hostname === 'localhost' ||
+      window.location.hostname === '127.0.0.1';
+
     if (isLocal) {
-      if (envUrl && envUrl.startsWith('http')) {
-        return envUrl.replace(/\/+$/, '');
-      }
-      return `http://${h}:3000/api`;
+      return `http://${window.location.hostname}:3000/api`;
     }
 
-    // 4. Deployed production — use the separate backend Vercel project
-    return PRODUCTION_BACKEND_URL;
+    return `${window.location.origin}/api`;
   }
 
-  return PRODUCTION_BACKEND_URL;
+  return '/api';
 };
 
 export const API_URL = getBaseUrl();
@@ -49,12 +50,15 @@ export const API_URL = getBaseUrl();
 export const api = axios.create({
   baseURL: API_URL,
   withCredentials: true,
+  timeout: 15000, // 15-second reasonable timeout for authentication & operations
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// Real-time backend ping check
+/**
+ * Real-time backend ping check verifying GET /api/health
+ */
 export async function pingBackendHealth(urlToTest?: string): Promise<{
   ok: boolean;
   message: string;
@@ -67,35 +71,51 @@ export async function pingBackendHealth(urlToTest?: string): Promise<{
 
   try {
     const res = await axios.get(testEndpoint, {
-      timeout: 6000,
+      timeout: 8000,
       headers: { Accept: 'application/json' },
     });
     const latency = Date.now() - startTime;
-    if (res.status === 200 && res.data) {
+    const isDbConnected = res.data?.database === 'connected';
+
+    if (res.status === 200 && isDbConnected) {
       return {
         ok: true,
-        message: res.data.message || 'Connected to backend server & MongoDB.',
+        message: 'Connected to backend server & MongoDB Atlas.',
+        latency,
+        data: res.data,
+      };
+    } else if (res.data?.status === 'degraded' || !isDbConnected) {
+      return {
+        ok: false,
+        message: 'Backend server is online, but MongoDB is disconnected or degraded.',
         latency,
         data: res.data,
       };
     }
+
     return {
       ok: false,
       message: `Unexpected response status ${res.status}`,
       latency,
+      data: res.data,
     };
   } catch (err: any) {
     const latency = Date.now() - startTime;
-    const msg = err.response?.data?.message || err.message || 'Server unreachable';
+    const msg =
+      err.response?.data?.message ||
+      (err.code === 'ECONNABORTED'
+        ? 'Health check timed out (8s limit)'
+        : err.message || 'Server unreachable');
     return {
       ok: false,
       message: msg,
       latency,
+      data: err.response?.data,
     };
   }
 }
 
-// Override backend URL in localStorage
+// Override backend URL in localStorage (development/diagnostics)
 export function setBackendUrl(url: string): void {
   if (typeof window !== 'undefined') {
     const clean = url.trim().replace(/\/+$/, '');
@@ -127,6 +147,18 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
     if (error.response?.status === 401 && !originalRequest._retry) {
+      // Do not attempt refresh on auth login endpoints
+      const isAuthLoginUrl =
+        originalRequest.url?.includes('/auth/login') ||
+        originalRequest.url?.includes('/auth/civic') ||
+        originalRequest.url?.includes('/auth/officer') ||
+        originalRequest.url?.includes('/auth/employee') ||
+        originalRequest.url?.includes('/auth/controller');
+
+      if (isAuthLoginUrl) {
+        return Promise.reject(error);
+      }
+
       originalRequest._retry = true;
       const refreshToken = localStorage.getItem('civics_refresh_token');
       if (refreshToken) {

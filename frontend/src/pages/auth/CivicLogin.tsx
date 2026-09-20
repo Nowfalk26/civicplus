@@ -5,9 +5,10 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
 import { GoogleLogin } from '@react-oauth/google';
-import { useStore } from '../../store/useStore';
 import { api } from '../../lib/api';
+import { useStore } from '../../store/useStore';
 import { GoogleOAuthModal, isGoogleClientIdConfigured, getEffectiveGoogleClientId } from '../../components/auth/GoogleOAuthModal';
+import { formatAuthError, executeAuthWithRetry } from '../../lib/authErrors';
 
 
 const civicEmailSchema = z.object({
@@ -79,16 +80,18 @@ export const CivicLogin: React.FC = () => {
 
     setLoading(true);
     try {
-      const res = await api.post('/auth/civic/google', {
-        credential: credentialResponse.credential,
-      });
+      const res = await executeAuthWithRetry(() =>
+        api.post('/auth/civic/google', {
+          credential: credentialResponse.credential,
+        })
+      );
 
       if (res.data?.success) {
         handleSuccessfulAuth(res.data.user, res.data.accessToken, res.data.refreshToken);
       }
     } catch (err: any) {
-      const msg = err.response?.data?.message || (!err.response || err.response.status >= 404 ? 'Backend server unreachable. Backend must be deployed.' : 'Google authentication verification failed.');
-      toast.error(msg);
+      const formatted = formatAuthError(err);
+      toast.error(formatted.message);
     } finally {
       setLoading(false);
     }
@@ -106,13 +109,14 @@ export const CivicLogin: React.FC = () => {
     setLoading(true);
     try {
       const cleanPhone = phoneNumber.startsWith('+91') ? phoneNumber : `+91${phoneNumber.replace(/\D/g, '')}`;
-      const res = await api.post('/auth/civic/mobile/send-otp', { phone: cleanPhone });
+      const res = await executeAuthWithRetry(() => api.post('/auth/civic/mobile/send-otp', { phone: cleanPhone }));
       if (res.data?.success) {
         setOtpSent(true);
         toast.success(res.data.message || 'SMS verification OTP dispatched to your phone.');
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to dispatch verification OTP.');
+      const formatted = formatAuthError(err);
+      toast.error(formatted.message);
     } finally {
       setLoading(false);
     }
@@ -128,17 +132,20 @@ export const CivicLogin: React.FC = () => {
     setLoading(true);
     try {
       const cleanPhone = phoneNumber.startsWith('+91') ? phoneNumber : `+91${phoneNumber.replace(/\D/g, '')}`;
-      const res = await api.post('/auth/civic/mobile/verify-otp', {
-        phone: cleanPhone,
-        otp: otpCode,
-        location: 'Tamil Nadu',
-      });
+      const res = await executeAuthWithRetry(() =>
+        api.post('/auth/civic/mobile/verify-otp', {
+          phone: cleanPhone,
+          otp: otpCode,
+          location: 'Tamil Nadu',
+        })
+      );
 
       if (res.data?.success) {
         handleSuccessfulAuth(res.data.user, res.data.accessToken, res.data.refreshToken);
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Invalid or expired OTP.');
+      const formatted = formatAuthError(err);
+      toast.error(formatted.message);
     } finally {
       setLoading(false);
     }
@@ -148,12 +155,13 @@ export const CivicLogin: React.FC = () => {
   const onSubmitEmailLogin = async (values: CivicEmailFormValues) => {
     setLoading(true);
     try {
-      const res = await api.post('/auth/civic/login', values);
+      const res = await executeAuthWithRetry(() => api.post('/auth/civic/login', values));
       if (res.data?.success) {
         handleSuccessfulAuth(res.data.user, res.data.accessToken, res.data.refreshToken);
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Invalid email or password.');
+      const formatted = formatAuthError(err);
+      toast.error(formatted.message);
     } finally {
       setLoading(false);
     }

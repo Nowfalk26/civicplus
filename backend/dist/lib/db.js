@@ -1,68 +1,41 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SRV_ATLAS_URI = exports.DIRECT_ATLAS_URI = void 0;
+exports.sanitizeMongoUri = sanitizeMongoUri;
 exports.connectDb = connectDb;
 exports.seedControllerAdmin = seedControllerAdmin;
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
 const mongoose_1 = __importDefault(require("mongoose"));
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
-const path_1 = __importDefault(require("path"));
-const fs_1 = __importDefault(require("fs"));
 const dns_1 = __importDefault(require("dns"));
 const User_1 = require("../models/User");
 const Counter_1 = require("../models/Counter");
-// Configure public DNS servers for SRV query resolution with MongoDB Atlas
+// Configure public DNS servers for reliable SRV resolution across environments
 try {
     dns_1.default.setServers(['8.8.8.8', '1.1.1.1']);
 }
-catch { }
-let cached = global.mongooseCache || { conn: null, promise: null };
+catch {
+    // Ignore DNS setServers failure in environments with restricted permissions
+}
+const cached = global.mongooseCache || { conn: null, promise: null };
 if (!global.mongooseCache) {
     global.mongooseCache = cached;
 }
-// Direct replica set connection string (bypasses SRV lookup for 100% reliability on Vercel/Lambda/Windows/Linux)
-exports.DIRECT_ATLAS_URI = 'mongodb://nowfal0326_db_user:k1982n2007@ac-pvbvqlw-shard-00-00.obid4se.mongodb.net:27017,ac-pvbvqlw-shard-00-01.obid4se.mongodb.net:27017,ac-pvbvqlw-shard-00-02.obid4se.mongodb.net:27017/civicsplus?ssl=true&replicaSet=atlas-wc41ru-shard-0&authSource=admin&retryWrites=true&w=majority';
-exports.SRV_ATLAS_URI = 'mongodb+srv://nowfal0326_db_user:k1982n2007@cluster0.obid4se.mongodb.net/civicsplus?retryWrites=true&w=majority&appName=Cluster0';
 /**
- * Initializes and ensures the single persistent MongoDB connection.
- * Supports primary external/Atlas URI or disk-persisted embedded runner fallback.
+ * Sanitizes a MongoDB connection URI by redacting username & password
+ */
+function sanitizeMongoUri(uri) {
+    if (!uri)
+        return 'undefined';
+    return uri.replace(/\/\/[^:]+:[^@]+@/, '//***:***@');
+}
+/**
+ * Initializes and maintains the persistent MongoDB connection.
+ * Strictly uses configured process.env.MONGODB_URI from environment variables.
+ * No hardcoded credentials. No in-memory database fallback.
  */
 async function connectDb() {
     if (cached.conn && mongoose_1.default.connection.readyState === 1) {
@@ -71,73 +44,45 @@ async function connectDb() {
     if (!cached.promise) {
         cached.promise = (async () => {
             const configuredUri = process.env.MONGODB_URI;
-            // 1. If custom configured URI is provided, try that first
-            if (configuredUri && configuredUri.trim()) {
-                try {
-                    const conn = await mongoose_1.default.connect(configuredUri, {
-                        serverSelectionTimeoutMS: 5000,
-                    });
-                    console.log(`✔ Connected to MongoDB (custom URI): ${configuredUri.replace(/\/\/.*@/, '//***@')}`);
-                    await seedControllerAdmin();
-                    return conn;
-                }
-                catch (err) {
-                    console.warn(`⚠ Custom MONGODB_URI failed (${err.message}). Trying direct Atlas replica set.`);
-                }
+            if (!configuredUri || !configuredUri.trim()) {
+                const err = new Error('[MONGO] Missing required environment variable: MONGODB_URI');
+                console.error(err.message);
+                throw err;
             }
-            // 2. Direct Atlas connection (fastest, most reliable on all platforms, no SRV DNS lookup issues)
+            const safeUri = sanitizeMongoUri(configuredUri);
+            console.log(`[MONGO] Connecting to database: ${safeUri}`);
             try {
-                const conn = await mongoose_1.default.connect(exports.DIRECT_ATLAS_URI, {
-                    serverSelectionTimeoutMS: 6000,
+                const conn = await mongoose_1.default.connect(configuredUri, {
+                    serverSelectionTimeoutMS: 5000,
+                    connectTimeoutMS: 10000,
                 });
-                console.log(`✔ Connected to MongoDB Atlas (Direct Replica Set): civicsplus`);
+                console.log('[MONGO] Connected successfully to persistent MongoDB.');
                 await seedControllerAdmin();
                 return conn;
             }
-            catch (directErr) {
-                console.warn(`⚠ Direct Atlas connection failed (${directErr.message}). Trying SRV URI.`);
-            }
-            // 3. SRV Atlas connection attempt
-            try {
-                const conn = await mongoose_1.default.connect(exports.SRV_ATLAS_URI, {
-                    serverSelectionTimeoutMS: 6000,
-                });
-                console.log(`✔ Connected to MongoDB Atlas (SRV): civicsplus`);
-                await seedControllerAdmin();
-                return conn;
-            }
-            catch (srvErr) {
-                console.warn(`⚠ SRV Atlas connection failed (${srvErr.message}).`);
-            }
-            // 4. Fallback: Embedded MongoDB (Only on local machine, never on Vercel/serverless)
-            if (!process.env.VERCEL) {
-                try {
-                    const { MongoMemoryServer } = await Promise.resolve().then(() => __importStar(require('mongodb-memory-server')));
-                    if (!global.mongoMemoryServerInstance) {
-                        const persistentDbDir = path_1.default.resolve(__dirname, '../../data/mongodb_data');
-                        if (!fs_1.default.existsSync(persistentDbDir)) {
-                            fs_1.default.mkdirSync(persistentDbDir, { recursive: true });
-                        }
-                        global.mongoMemoryServerInstance = await MongoMemoryServer.create({
-                            instance: {
-                                dbPath: persistentDbDir,
-                                storageEngine: 'wiredTiger',
-                                dbName: 'civicsplus',
-                            },
-                        });
-                    }
-                    const embeddedUri = global.mongoMemoryServerInstance.getUri('civicsplus');
-                    const conn = await mongoose_1.default.connect(embeddedUri);
-                    console.log(`✔ Connected to Persistent Local MongoDB (WiredTiger on-disk) at: ${embeddedUri}`);
-                    await seedControllerAdmin();
-                    return conn;
+            catch (err) {
+                // Safe categorization of MongoDB connection errors
+                let errorCategory = 'CONNECTION_FAILED';
+                if (err.message?.includes('whitelisted') || err.message?.includes('SSL alert') || err.message?.includes('tlsv1 alert')) {
+                    errorCategory = 'IP_NOT_WHITELISTED';
+                    console.error('[MONGO] MongoDB connection failed: IP address is not whitelisted on MongoDB Atlas Network Access.');
+                    console.error('[MONGO] Action needed: Add 0.0.0.0/0 (or current IP) to Atlas Network Access -> IP Access List.');
                 }
-                catch (embeddedErr) {
-                    console.error('CRITICAL: Failed to initialize persistent MongoDB:', embeddedErr);
-                    throw embeddedErr;
+                else if (err.message?.includes('querySrv') || err.message?.includes('ECONNREFUSED')) {
+                    errorCategory = 'DNS_RESOLUTION_FAILED';
+                    console.error(`[MONGO] MongoDB connection failed: DNS SRV resolution error (${err.message}).`);
                 }
+                else if (err.message?.includes('Authentication failed') || err.message?.includes('auth error')) {
+                    errorCategory = 'AUTHENTICATION_FAILED';
+                    console.error('[MONGO] MongoDB connection failed: Database authentication credentials rejected.');
+                }
+                else {
+                    console.error(`[MONGO] MongoDB connection failed (${errorCategory}):`, err.message);
+                }
+                const enrichedError = new Error(`[MONGO] MongoDB connection failed (${errorCategory}): ${err.message}`);
+                enrichedError.category = errorCategory;
+                throw enrichedError;
             }
-            throw new Error('Could not connect to MongoDB Atlas and local fallback is disabled on Vercel.');
         })();
     }
     try {
@@ -151,7 +96,7 @@ async function connectDb() {
 }
 /**
  * Ensures the designated Chief Civic Controller account exists in MongoDB
- * Clean initial start: Exactly ONE Controller Admin, 0 Civic Users, 0 Officers, 0 Reports.
+ * Clean initial start: Exactly ONE Controller Admin.
  */
 async function seedControllerAdmin() {
     try {
@@ -181,10 +126,9 @@ async function seedControllerAdmin() {
                 fraudScore: 0,
                 isBanned: false,
             });
-            console.log(`✔ Chief Civic Controller Admin seeded permanently: ${designatedEmail} (${accountNumber})`);
+            console.log(`[MONGO] Seeded Chief Civic Controller Admin: ${designatedEmail} (${accountNumber})`);
         }
         else {
-            // Ensure role is ADMIN and accountStatus is ACTIVE
             if (controller.role !== 'ADMIN' || controller.accountStatus !== 'ACTIVE') {
                 controller.role = 'ADMIN';
                 controller.accountStatus = 'ACTIVE';
@@ -195,6 +139,6 @@ async function seedControllerAdmin() {
         }
     }
     catch (err) {
-        console.error('Error seeding Controller Admin:', err.message);
+        console.error('[MONGO] Error seeding Controller Admin:', err.message);
     }
 }

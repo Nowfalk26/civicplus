@@ -31,6 +31,7 @@ router.post('/officer/set-password', authenticate, authController.officerSetPass
 
 // 4. Employee Authentication Route
 router.post('/employee/login', authRateLimiter, authController.employeeLogin);
+router.post('/employee/change-password', authenticate, authController.employeeChangePassword);
 
 // 5. Officer Profile Change Requests
 router.post('/officer/profile-change-request', authenticate, authController.officerCreateProfileChangeRequest);

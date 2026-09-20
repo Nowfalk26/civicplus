@@ -16,6 +16,11 @@ const createEmployeeSchema = z.object({
   department: z.string().min(2, 'Department is required'),
   designation: z.string().min(2, 'Designation is required'),
   assignedZone: z.string().min(2, 'Assigned area/zone is required'),
+  address: z.string().optional(),
+  profilePhoto: z.string().optional(),
+  joiningDate: z.string().optional(),
+  notes: z.string().optional(),
+  password: z.string().min(6, 'Password must be at least 6 characters').optional(),
 });
 
 export const employeeController = {
@@ -78,15 +83,30 @@ export const employeeController = {
         return;
       }
 
-      const { fullName, email, phone, department, designation, assignedZone } = validation.data;
+      const {
+        fullName,
+        email,
+        phone,
+        department,
+        designation,
+        assignedZone,
+        address,
+        profilePhoto,
+        joiningDate,
+        notes,
+        password,
+      } = validation.data;
       const normalizedEmail = email.toLowerCase().trim();
 
-      // Verify email/phone not already in use
-      const existing = await User.findOne({
+      // Verify email/phone not already in use across User and Employee
+      const existingUser = await User.findOne({
+        $or: [{ email: normalizedEmail }, { phone }],
+      });
+      const existingEmployee = await Employee.findOne({
         $or: [{ email: normalizedEmail }, { phone }],
       });
 
-      if (existing) {
+      if (existingUser || existingEmployee) {
         res.status(400).json({
           success: false,
           message: 'An account with this official email or phone number already exists.',
@@ -97,8 +117,8 @@ export const employeeController = {
       // Generate credentials
       const employeeId = await getNextEmployeeNumber();
       const accountNumber = await getNextAccountNumber();
-      const tempPassword = `TNStaff@${Math.floor(1000 + Math.random() * 9000)}`;
-      const hashedPassword = await bcrypt.hash(tempPassword, 10);
+      const effectivePassword = password && password.trim().length >= 6 ? password.trim() : `TNStaff@${Math.floor(1000 + Math.random() * 9000)}`;
+      const hashedPassword = await bcrypt.hash(effectivePassword, 10);
       const username = `${fullName.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 12)}_${Math.floor(100 + Math.random() * 900)}`;
 
       // 1. Create linked User authentication identity
@@ -131,22 +151,109 @@ export const employeeController = {
         department,
         designation,
         assignedZone,
+        address: address || '',
+        profilePhoto: profilePhoto || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+        joiningDate: joiningDate ? new Date(joiningDate) : new Date(),
+        notes: notes || '',
+        mustChangePassword: true,
+        createdBy: req.user?.id || null,
         accountStatus: 'ACTIVE',
       });
 
-      console.log(`[EMPLOYEE-CREATED] ${fullName} (${employeeId}) created successfully in MongoDB.`);
+      console.log(`[EMPLOYEE-CREATED] ${fullName} (${employeeId}) created successfully in MongoDB Atlas.`);
 
       res.status(201).json({
         success: true,
-        message: `Employee ${fullName} created successfully. Login credentials ready.`,
+        message: `Employee ${fullName} created successfully. Credentials active.`,
         employee: {
           ...newEmployee.toJSON(),
-          tempPassword,
+          tempPassword: effectivePassword,
         },
       });
     } catch (error: any) {
       console.error('Error creating employee:', error);
       res.status(500).json({ success: false, message: 'Failed to create employee.' });
+    }
+  },
+
+  // PUT /api/employees/:id (Officer / Admin - Edit employee details)
+  update: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const { id } = req.params;
+      const { fullName, phone, department, designation, assignedZone, address, profilePhoto, notes } = req.body;
+
+      const employee = await Employee.findById(id);
+      if (!employee) {
+        res.status(404).json({ success: false, message: 'Employee record not found.' });
+        return;
+      }
+
+      if (fullName) employee.fullName = fullName.trim();
+      if (phone) employee.phone = phone.trim();
+      if (department) employee.department = department.trim();
+      if (designation) employee.designation = designation.trim();
+      if (assignedZone) employee.assignedZone = assignedZone.trim();
+      if (address !== undefined) employee.address = address.trim();
+      if (profilePhoto) employee.profilePhoto = profilePhoto.trim();
+      if (notes !== undefined) employee.notes = notes.trim();
+
+      await employee.save();
+
+      // Update linked user
+      await User.findByIdAndUpdate(employee.userId, {
+        ...(fullName ? { name: fullName.trim() } : {}),
+        ...(phone ? { phone: phone.trim() } : {}),
+        ...(department ? { department: department.trim() } : {}),
+        ...(designation ? { designation: designation.trim() } : {}),
+        ...(assignedZone ? { location: assignedZone.trim() } : {}),
+      });
+
+      res.json({
+        success: true,
+        message: 'Employee details updated successfully.',
+        employee: employee.toJSON(),
+      });
+    } catch (error: any) {
+      console.error('Error updating employee:', error);
+      res.status(500).json({ success: false, message: 'Failed to update employee.' });
+    }
+  },
+
+  // POST /api/employees/:id/reset-password (Officer / Admin)
+  resetPassword: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      const { id } = req.params;
+      const { newPassword } = req.body;
+
+      const employee = await Employee.findById(id);
+      if (!employee) {
+        res.status(404).json({ success: false, message: 'Employee record not found.' });
+        return;
+      }
+
+      const generatedPassword = newPassword && newPassword.trim().length >= 6
+        ? newPassword.trim()
+        : `TNStaff@${Math.floor(1000 + Math.random() * 9000)}`;
+      const hashedPassword = await bcrypt.hash(generatedPassword, 10);
+
+      await User.findByIdAndUpdate(employee.userId, {
+        password: hashedPassword,
+        needsPasswordChange: true,
+      });
+
+      employee.mustChangePassword = true;
+      await employee.save();
+
+      res.json({
+        success: true,
+        message: `Password reset successfully for ${employee.fullName}.`,
+        tempPassword: generatedPassword,
+      });
+    } catch (error: any) {
+      console.error('Error resetting employee password:', error);
+      res.status(500).json({ success: false, message: 'Failed to reset employee password.' });
     }
   },
 

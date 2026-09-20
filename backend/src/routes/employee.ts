@@ -11,7 +11,9 @@ router.post('/my-reports/:id/verify', authenticate, authorize('EMPLOYEE'), emplo
 // Officer & Controller Management
 router.get('/', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.getAll);
 router.post('/', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.create);
+router.put('/:id', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.update);
 router.put('/:id/status', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.toggleStatus);
+router.post('/:id/reset-password', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.resetPassword);
 router.get('/workload', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.getWorkload);
 
 export default router;

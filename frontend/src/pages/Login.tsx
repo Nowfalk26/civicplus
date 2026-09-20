@@ -27,20 +27,20 @@ export const Login: React.FC = () => {
           </p>
         </div>
 
-        {/* 3 Distinct Portals */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* 4 Distinct Dedicated Portals */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {/* 1. Civic Portal */}
           <Link
             to="/civic/login"
             state={location.state}
-            className="group p-6 rounded-2xl border-2 border-emerald-100 bg-emerald-50/40 hover:bg-emerald-50 hover:border-emerald-300 transition-all flex flex-col justify-between shadow-xs hover:shadow-md hover:-translate-y-1"
+            className="group p-5 rounded-2xl border-2 border-emerald-100 bg-emerald-50/40 hover:bg-emerald-50 hover:border-emerald-300 transition-all flex flex-col justify-between shadow-xs hover:shadow-md hover:-translate-y-1"
           >
             <div className="space-y-3">
               <div className="w-12 h-12 rounded-xl bg-emerald-600 text-white flex items-center justify-center shadow-md shadow-emerald-600/20 group-hover:scale-105 transition-transform">
                 <span className="material-symbols-outlined text-[26px]">how_to_reg</span>
               </div>
               <div>
-                <h3 className="text-lg font-bold text-on-surface">Civic Login</h3>
+                <h3 className="text-base font-bold text-on-surface">Civic Login</h3>
                 <p className="text-[11px] font-semibold text-emerald-800">குடிமக்கள் தளம்</p>
               </div>
               <p className="text-xs text-on-surface-variant leading-relaxed">
@@ -48,7 +48,7 @@ export const Login: React.FC = () => {
               </p>
             </div>
 
-            <div className="mt-6 pt-3 border-t border-emerald-200/60 flex items-center justify-between text-xs font-bold text-emerald-800">
+            <div className="mt-5 pt-3 border-t border-emerald-200/60 flex items-center justify-between text-xs font-bold text-emerald-800">
               <span>Enter as Citizen</span>
               <span className="material-symbols-outlined text-[16px] group-hover:translate-x-1 transition-transform">
                 arrow_forward
@@ -60,14 +60,14 @@ export const Login: React.FC = () => {
           <Link
             to="/officer/login"
             state={location.state}
-            className="group p-6 rounded-2xl border-2 border-blue-100 bg-blue-50/40 hover:bg-blue-50 hover:border-blue-300 transition-all flex flex-col justify-between shadow-xs hover:shadow-md hover:-translate-y-1"
+            className="group p-5 rounded-2xl border-2 border-blue-100 bg-blue-50/40 hover:bg-blue-50 hover:border-blue-300 transition-all flex flex-col justify-between shadow-xs hover:shadow-md hover:-translate-y-1"
           >
             <div className="space-y-3">
               <div className="w-12 h-12 rounded-xl bg-blue-700 text-white flex items-center justify-center shadow-md shadow-blue-700/20 group-hover:scale-105 transition-transform">
-                <span className="material-symbols-outlined text-[26px]">engineering</span>
+                <span className="material-symbols-outlined text-[26px]">shield_person</span>
               </div>
               <div>
-                <h3 className="text-lg font-bold text-on-surface">Officer Login</h3>
+                <h3 className="text-base font-bold text-on-surface">Officer Login</h3>
                 <p className="text-[11px] font-semibold text-blue-800">அதிகாரி தளம்</p>
               </div>
               <p className="text-xs text-on-surface-variant leading-relaxed">
@@ -75,7 +75,7 @@ export const Login: React.FC = () => {
               </p>
             </div>
 
-            <div className="mt-6 pt-3 border-t border-blue-200/60 flex items-center justify-between text-xs font-bold text-blue-800">
+            <div className="mt-5 pt-3 border-t border-blue-200/60 flex items-center justify-between text-xs font-bold text-blue-800">
               <span>Enter as Officer</span>
               <span className="material-symbols-outlined text-[16px] group-hover:translate-x-1 transition-transform">
                 arrow_forward
@@ -83,18 +83,45 @@ export const Login: React.FC = () => {
             </div>
           </Link>
 
-          {/* 3. Controller Portal */}
+          {/* 3. Field Employee Portal */}
+          <Link
+            to="/employee/login"
+            state={location.state}
+            className="group p-5 rounded-2xl border-2 border-amber-100 bg-amber-50/40 hover:bg-amber-50 hover:border-amber-300 transition-all flex flex-col justify-between shadow-xs hover:shadow-md hover:-translate-y-1"
+          >
+            <div className="space-y-3">
+              <div className="w-12 h-12 rounded-xl bg-amber-600 text-white flex items-center justify-center shadow-md shadow-amber-600/20 group-hover:scale-105 transition-transform">
+                <span className="material-symbols-outlined text-[26px]">engineering</span>
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-on-surface">Employee Login</h3>
+                <p className="text-[11px] font-semibold text-amber-800">கள பணியாளர் தளம்</p>
+              </div>
+              <p className="text-xs text-on-surface-variant leading-relaxed">
+                Direct authentication for departmental field staff to verify and inspect assigned reports.
+              </p>
+            </div>
+
+            <div className="mt-5 pt-3 border-t border-amber-200/60 flex items-center justify-between text-xs font-bold text-amber-800">
+              <span>Enter as Staff</span>
+              <span className="material-symbols-outlined text-[16px] group-hover:translate-x-1 transition-transform">
+                arrow_forward
+              </span>
+            </div>
+          </Link>
+
+          {/* 4. Controller Portal */}
           <Link
             to="/controller/login"
             state={location.state}
-            className="group p-6 rounded-2xl border-2 border-purple-100 bg-purple-50/40 hover:bg-purple-50 hover:border-purple-300 transition-all flex flex-col justify-between shadow-xs hover:shadow-md hover:-translate-y-1"
+            className="group p-5 rounded-2xl border-2 border-purple-100 bg-purple-50/40 hover:bg-purple-50 hover:border-purple-300 transition-all flex flex-col justify-between shadow-xs hover:shadow-md hover:-translate-y-1"
           >
             <div className="space-y-3">
               <div className="w-12 h-12 rounded-xl bg-purple-700 text-white flex items-center justify-center shadow-md shadow-purple-700/20 group-hover:scale-105 transition-transform">
                 <span className="material-symbols-outlined text-[26px]">admin_panel_settings</span>
               </div>
               <div>
-                <h3 className="text-lg font-bold text-on-surface">Controller Login</h3>
+                <h3 className="text-base font-bold text-on-surface">Controller Login</h3>
                 <p className="text-[11px] font-semibold text-purple-800">தலைமை நிர்வாகி</p>
               </div>
               <p className="text-xs text-on-surface-variant leading-relaxed">
@@ -102,7 +129,7 @@ export const Login: React.FC = () => {
               </p>
             </div>
 
-            <div className="mt-6 pt-3 border-t border-purple-200/60 flex items-center justify-between text-xs font-bold text-purple-800">
+            <div className="mt-5 pt-3 border-t border-purple-200/60 flex items-center justify-between text-xs font-bold text-purple-800">
               <span>Enter as Controller</span>
               <span className="material-symbols-outlined text-[16px] group-hover:translate-x-1 transition-transform">
                 arrow_forward

@@ -15,6 +15,7 @@ import { Register } from './pages/Register';
 import { CivicLogin } from './pages/auth/CivicLogin';
 import { OfficerLogin } from './pages/auth/OfficerLogin';
 import { ControllerLogin } from './pages/auth/ControllerLogin';
+import { EmployeeLogin } from './pages/auth/EmployeeLogin';
 import { OfficerRequestAccess } from './pages/auth/OfficerRequestAccess';
 import { OfficerSetPassword } from './pages/auth/OfficerSetPassword';
 
@@ -86,6 +87,7 @@ export const App: React.FC = () => {
               }
             />
             <Route path="/controller/login" element={<ControllerLogin />} />
+            <Route path="/employee/login" element={<EmployeeLogin />} />
             <Route path="/register" element={<Register />} />
 
 

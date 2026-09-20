@@ -858,15 +858,22 @@ export const authController = {
       await connectDb();
       const { identifier, password } = req.body;
       if (!identifier || !password) {
-        res.status(400).json({ success: false, message: 'Employee Email/ID and password are required.' });
+        res.status(400).json({ success: false, message: 'Employee Email, Phone, or ID and password are required.' });
         return;
       }
 
-      const normalized = identifier.toLowerCase().trim();
+      const trimmed = identifier.trim();
+      const normalized = trimmed.toLowerCase();
+      const cleanPhone = trimmed.replace(/\D/g, '');
 
-      // Find employee by email or employeeId
+      // Find employee by email, employeeId, or phone
       const empRecord = await Employee.findOne({
-        $or: [{ email: normalized }, { employeeId: identifier.trim().toUpperCase() }],
+        $or: [
+          { email: normalized },
+          { employeeId: trimmed.toUpperCase() },
+          { phone: trimmed },
+          ...(cleanPhone.length >= 10 ? [{ phone: { $regex: cleanPhone.slice(-10) + '$' } }] : []),
+        ],
       });
 
       if (!empRecord) {
@@ -875,13 +882,18 @@ export const authController = {
       }
 
       if (empRecord.accountStatus === 'DISABLED') {
-        res.status(403).json({ success: false, message: 'Employee account has been deactivated.' });
+        res.status(403).json({ success: false, message: 'Employee account has been deactivated. Please contact your department officer.' });
         return;
       }
 
       const user = await User.findById(empRecord.userId).select('+password');
       if (!user) {
         res.status(401).json({ success: false, message: 'Employee user credentials not found.' });
+        return;
+      }
+
+      if (user.accountStatus === 'SUSPENDED' || user.accountStatus === 'DISABLED' || user.isBanned) {
+        res.status(403).json({ success: false, message: 'Employee account is currently disabled.' });
         return;
       }
 
@@ -901,9 +913,24 @@ export const authController = {
       const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: 'EMPLOYEE' });
       const refreshToken = generateRefreshToken({ userId: user.id, email: user.email, role: 'EMPLOYEE' });
 
+      res.cookie('accessToken', accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 15 * 60 * 1000,
+      });
+
+      res.cookie('refreshToken', refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
+
       res.json({
         success: true,
         message: 'Employee authenticated successfully.',
+        mustChangePassword: !!empRecord.mustChangePassword,
         user: {
           ...user.toJSON(),
           employeeProfile: empRecord.toJSON(),
@@ -912,7 +939,52 @@ export const authController = {
         refreshToken,
       });
     } catch (error: any) {
+      console.error('Employee login error:', error);
       res.status(500).json({ success: false, message: 'Error during employee login.' });
+    }
+  },
+
+  // POST /api/auth/employee/change-password
+  employeeChangePassword: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      await connectDb();
+      if (!req.user || req.user.role !== 'EMPLOYEE') {
+        res.status(403).json({ success: false, message: 'Only authorized employees can perform this action.' });
+        return;
+      }
+
+      const { currentPassword, newPassword } = req.body;
+      if (!newPassword || newPassword.length < 6) {
+        res.status(400).json({ success: false, message: 'New password must be at least 6 characters long.' });
+        return;
+      }
+
+      const user = await User.findById(req.user.id).select('+password');
+      if (!user) {
+        res.status(404).json({ success: false, message: 'Employee profile not found.' });
+        return;
+      }
+
+      if (currentPassword && user.password) {
+        const isMatch = await bcrypt.compare(currentPassword, user.password);
+        if (!isMatch) {
+          res.status(400).json({ success: false, message: 'Current password verification failed.' });
+          return;
+        }
+      }
+
+      user.password = await bcrypt.hash(newPassword, 10);
+      await user.save();
+
+      await Employee.findOneAndUpdate({ userId: user._id }, { mustChangePassword: false });
+
+      res.json({
+        success: true,
+        message: 'Password changed successfully. You may now continue using your account with your new password.',
+      });
+    } catch (error: any) {
+      console.error('Employee change password error:', error);
+      res.status(500).json({ success: false, message: 'Error changing password.' });
     }
   },
 

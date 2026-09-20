@@ -10,6 +10,12 @@ export interface IEmployee extends Document {
   department: string;
   designation: string;
   assignedZone: string;
+  address?: string;
+  profilePhoto?: string;
+  joiningDate?: Date;
+  notes?: string;
+  mustChangePassword?: boolean;
+  createdBy?: mongoose.Types.ObjectId | string | null;
   accountStatus: 'ACTIVE' | 'DISABLED';
   assignedReportsCount: number;
   completedReportsCount: number;
@@ -68,6 +74,33 @@ const EmployeeSchema = new Schema<IEmployee>(
       type: String,
       required: true,
       trim: true,
+    },
+    address: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    profilePhoto: {
+      type: String,
+      default: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
+    },
+    joiningDate: {
+      type: Date,
+      default: Date.now,
+    },
+    notes: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    mustChangePassword: {
+      type: Boolean,
+      default: true,
+    },
+    createdBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
     },
     accountStatus: {
       type: String,

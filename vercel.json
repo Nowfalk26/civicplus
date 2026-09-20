@@ -1,11 +1,5 @@
 {
-  "services": {
-    "frontend": {
-      "root": "frontend",
-      "framework": "vite",
-      "buildCommand": "npm run build"
-    }
-  },
+  "outputDirectory": "frontend/dist",
   "rewrites": [
     {
       "source": "/api/health",
@@ -17,9 +11,7 @@
     },
     {
       "source": "/(.*)",
-      "destination": {
-        "service": "frontend"
-      }
+      "destination": "/index.html"
     }
   ]
 }

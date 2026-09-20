@@ -9,7 +9,7 @@ import { api } from '../../lib/api';
 
 const setPasswordSchema = z
   .object({
-    currentPassword: z.string().min(1, 'Please confirm your temporary password'),
+    currentPassword: z.string().optional(),
     newPassword: z
       .string()
       .min(8, 'Permanent password must be at least 8 characters long')
@@ -90,13 +90,18 @@ export const OfficerSetPassword: React.FC = () => {
         {/* Form */}
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div>
-            <label className="block text-xs font-bold text-on-surface mb-1">
-              Current Temporary Password
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-xs font-bold text-on-surface">
+                Current Temporary Password
+              </label>
+              <span className="text-[11px] text-amber-700 font-medium">
+                (Leave blank if logged in via Google)
+              </span>
+            </div>
             <input
               {...register('currentPassword')}
               type="password"
-              placeholder="Enter the one-time temporary password"
+              placeholder="Enter temporary password (or leave blank if using Google Sign-In)"
               className="w-full px-3.5 py-2.5 rounded-xl border border-outline-variant focus:border-amber-600 focus:ring-2 focus:ring-amber-600/20 text-sm outline-none"
             />
             {errors.currentPassword && (

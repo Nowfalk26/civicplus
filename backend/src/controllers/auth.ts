@@ -845,6 +845,7 @@ export const authController = {
       user.lastLoginAt = new Date();
       user.lastSeenAt = new Date();
       user.successfulLoginCount = (user.successfulLoginCount || 0) + 1;
+      user.needsPasswordChange = false;
       await user.save();
 
       const accessToken = generateAccessToken({ userId: user.id, email: user.email, role: user.role });

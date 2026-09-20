@@ -1,5 +1,8 @@
 import axios from 'axios';
 
+// Production backend URL (separate Vercel project that is already live and working)
+const PRODUCTION_BACKEND_URL = 'https://civicplus-backend.vercel.app/api';
+
 export const getBaseUrl = (): string => {
   // 1. Check custom override in localStorage (configured via UI modal)
   if (typeof window !== 'undefined') {
@@ -17,7 +20,7 @@ export const getBaseUrl = (): string => {
     return clean.endsWith('/api') ? clean : `${clean}/api`;
   }
 
-  // 3. Localhost / Private local network
+  // 3. Localhost / Private local network — use local backend
   if (typeof window !== 'undefined') {
     const h = window.location.hostname;
     const isLocal =
@@ -34,12 +37,11 @@ export const getBaseUrl = (): string => {
       return `http://${h}:3000/api`;
     }
 
-    // 4. In deployed production (e.g., Vercel, custom domain)
-    // Seamless same-origin serverless routing:
-    return `${window.location.origin}/api`;
+    // 4. Deployed production — use the separate backend Vercel project
+    return PRODUCTION_BACKEND_URL;
   }
 
-  return '/api';
+  return PRODUCTION_BACKEND_URL;
 };
 
 export const API_URL = getBaseUrl();

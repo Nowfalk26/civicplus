@@ -1,7 +1,23 @@
 import axios from 'axios';
 
-const getBaseUrl = (): string => {
+export const getBaseUrl = (): string => {
+  // 1. Check custom override in localStorage (configured via UI modal)
+  if (typeof window !== 'undefined') {
+    const customUrl = localStorage.getItem('civics_backend_url');
+    if (customUrl && customUrl.trim().length > 0) {
+      const clean = customUrl.trim().replace(/\/+$/, '');
+      return clean.endsWith('/api') ? clean : `${clean}/api`;
+    }
+  }
+
+  // 2. Check build-time environment variable VITE_API_URL
   const envUrl = (import.meta as unknown as { env: { VITE_API_URL?: string } }).env?.VITE_API_URL;
+  if (envUrl && envUrl.startsWith('http') && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
+    const clean = envUrl.trim().replace(/\/+$/, '');
+    return clean.endsWith('/api') ? clean : `${clean}/api`;
+  }
+
+  // 3. Localhost / Private local network
   if (typeof window !== 'undefined') {
     const h = window.location.hostname;
     const isLocal =
@@ -12,16 +28,19 @@ const getBaseUrl = (): string => {
       h.startsWith('172.') ||
       h.endsWith('.local');
     if (isLocal) {
-      return envUrl && envUrl.startsWith('http') ? envUrl : `http://${h}:3000/api`;
+      if (envUrl && envUrl.startsWith('http')) {
+        return envUrl.replace(/\/+$/, '');
+      }
+      return `http://${h}:3000/api`;
     }
-  }
-  // In production / deployed domain (e.g., Vercel, mobile, cross-device)
-  if (envUrl && envUrl.startsWith('http') && !envUrl.includes('localhost') && !envUrl.includes('127.0.0.1')) {
-    return envUrl;
-  }
-  return 'http://localhost:3000/api';
-};
 
+    // 4. In deployed production (e.g., Vercel, custom domain)
+    // Seamless same-origin serverless routing:
+    return `${window.location.origin}/api`;
+  }
+
+  return '/api';
+};
 
 export const API_URL = getBaseUrl();
 
@@ -33,7 +52,63 @@ export const api = axios.create({
   },
 });
 
+// Real-time backend ping check
+export async function pingBackendHealth(urlToTest?: string): Promise<{
+  ok: boolean;
+  message: string;
+  latency: number;
+  data?: any;
+}> {
+  const targetBase = (urlToTest || getBaseUrl()).replace(/\/+$/, '');
+  const testEndpoint = targetBase.endsWith('/api') ? `${targetBase}/health` : `${targetBase}/api/health`;
+  const startTime = Date.now();
 
+  try {
+    const res = await axios.get(testEndpoint, {
+      timeout: 6000,
+      headers: { Accept: 'application/json' },
+    });
+    const latency = Date.now() - startTime;
+    if (res.status === 200 && res.data) {
+      return {
+        ok: true,
+        message: res.data.message || 'Connected to backend server & MongoDB.',
+        latency,
+        data: res.data,
+      };
+    }
+    return {
+      ok: false,
+      message: `Unexpected response status ${res.status}`,
+      latency,
+    };
+  } catch (err: any) {
+    const latency = Date.now() - startTime;
+    const msg = err.response?.data?.message || err.message || 'Server unreachable';
+    return {
+      ok: false,
+      message: msg,
+      latency,
+    };
+  }
+}
+
+// Override backend URL in localStorage
+export function setBackendUrl(url: string): void {
+  if (typeof window !== 'undefined') {
+    const clean = url.trim().replace(/\/+$/, '');
+    localStorage.setItem('civics_backend_url', clean);
+    window.location.reload();
+  }
+}
+
+// Reset backend URL in localStorage
+export function resetBackendUrl(): void {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('civics_backend_url');
+    window.location.reload();
+  }
+}
 
 // Attach JWT access token if present in localStorage
 api.interceptors.request.use((config) => {

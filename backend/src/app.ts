@@ -23,27 +23,21 @@ app.use(
   })
 );
 
-// CORS configuration
-const allowedOrigins = [
-  process.env.FRONTEND_URL || 'http://localhost:5173',
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-];
-
+// CORS configuration: Allow all Vercel domains, localhost, and custom frontend domains
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.vercel.app') || process.env.NODE_ENV !== 'production') {
-        callback(null, true);
-      } else {
-        callback(new Error('CORS access denied for this origin.'));
-      }
+    origin: (_origin, callback) => {
+      // Allow any requesting origin for seamless deployment across Vercel, localhost, and custom domains
+      callback(null, true);
     },
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   })
 );
+
+// Explicit OPTIONS pre-flight handler
+app.options('*', cors());
 
 // Request parsing
 app.use(express.json({ limit: '20mb' }));
@@ -64,7 +58,7 @@ app.use(async (_req: Request, _res: Response, next: NextFunction) => {
 app.use('/api', globalRateLimiter);
 
 // Root Status Endpoint
-app.get('/', (_req: Request, res: Response) => {
+const rootHandler = (_req: Request, res: Response) => {
   res.json({
     status: 'online',
     platform: 'Civics Plus Tamil Nadu Backend API',
@@ -79,10 +73,12 @@ app.get('/', (_req: Request, res: Response) => {
       analytics: '/api/analytics',
     },
   });
-});
+};
+app.get('/', rootHandler);
+app.get('/api', rootHandler);
 
-// System Health Check
-app.get('/api/health', (_req: Request, res: Response) => {
+// System Health Check (Available at both /health and /api/health)
+const healthHandler = (_req: Request, res: Response) => {
   res.json({
     status: 'healthy',
     platform: 'Civics Plus - Tamil Nadu Civic Complaints',
@@ -91,14 +87,25 @@ app.get('/api/health', (_req: Request, res: Response) => {
     version: '2.0.0',
     region: 'Tamil Nadu, India',
   });
-});
+};
+app.get('/api/health', healthHandler);
+app.get('/health', healthHandler);
 
-// Mount Routes
+// Mount Routes (Mount both with /api prefix and without for maximum deployment compatibility)
 app.use('/api/auth', authRoutes);
+app.use('/auth', authRoutes);
+
 app.use('/api/complaints', complaintRoutes);
+app.use('/complaints', complaintRoutes);
+
 app.use('/api/users', userRoutes);
+app.use('/users', userRoutes);
+
 app.use('/api/employees', employeeRoutes);
+app.use('/employees', employeeRoutes);
+
 app.use('/api/analytics', analyticsRoutes);
+app.use('/analytics', analyticsRoutes);
 
 // 404 Handler
 app.use((_req: Request, res: Response) => {

@@ -49,6 +49,7 @@ import { AdminOfficerApprovals } from './pages/admin/AdminOfficerApprovals';
 import { AdminProfileRequests } from './pages/admin/AdminProfileRequests';
 
 import { StartupSplash } from './components/ui/StartupSplash';
+import { BackendStatusBadge } from './components/ui/BackendStatusBadge';
 
 const queryClient = new QueryClient();
 
@@ -57,6 +58,7 @@ export const App: React.FC = () => {
     <QueryClientProvider client={queryClient}>
       <StartupSplash />
       <BrowserRouter>
+        <BackendStatusBadge />
         <Toaster
           position="top-right"
           toastOptions={{

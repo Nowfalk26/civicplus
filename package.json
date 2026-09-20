@@ -1,0 +1,37 @@
+{
+  "name": "civicsplus-platform",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Civics Plus Civic Complaint Platform for Tamil Nadu (Fullstack)",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build",
+    "postinstall": "cd backend && npm install",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.1",
+    "@vercel/node": "^13.0.1",
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "google-auth-library": "^11.1.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^9.10.1",
+    "multer": "^1.4.5-lts.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/cookie-parser": "^1.4.8",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jsonwebtoken": "^9.0.9",
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3"
+  }
+}

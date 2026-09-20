@@ -41,13 +41,15 @@ export async function connectDb(): Promise<typeof mongoose> {
 
   if (!cached.promise) {
     cached.promise = (async () => {
-      const configuredUri = process.env.MONGODB_URI;
+      const configuredUri =
+        process.env.MONGODB_URI ||
+        'mongodb+srv://nowfal0326_db_user:k1982n2007@cluster0.obid4se.mongodb.net/civicsplus?retryWrites=true&w=majority&appName=Cluster0';
 
       // 1. If configured URI points to remote (Atlas / custom host) or local, attempt connection
       if (configuredUri) {
         try {
           const isRemote = configuredUri.includes('mongodb+srv://') || (!configuredUri.includes('localhost') && !configuredUri.includes('127.0.0.1'));
-          const timeout = isRemote ? 8000 : 1500;
+          const timeout = isRemote ? 10000 : 2000;
           const conn = await mongoose.connect(configuredUri, {
             serverSelectionTimeoutMS: timeout,
           });
@@ -55,7 +57,7 @@ export async function connectDb(): Promise<typeof mongoose> {
           await seedControllerAdmin();
           return conn;
         } catch (err: any) {
-          console.warn(`⚠ Primary MongoDB connection to ${configuredUri} failed (${err.message}). Activating persistent local storage.`);
+          console.warn(`⚠ Primary MongoDB connection failed (${err.message}). Attempting fallback.`);
         }
       }
 

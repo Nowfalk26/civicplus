@@ -9,41 +9,28 @@ const User_1 = require("./models/User");
 const Complaint_1 = require("./models/Complaint");
 const Employee_1 = require("./models/Employee");
 const PORT = Number(process.env.PORT) || 3000;
-async function startServer() {
-    try {
-        await (0, db_1.connectDb)();
-        console.log('✔ MongoDB connection primed and validated.');
-    }
-    catch (error) {
-        console.error('CRITICAL: Could not establish MongoDB connection:', error);
-    }
-    app_1.default.listen(PORT, async () => {
-        let userCount = 0;
-        let complaintCount = 0;
-        let employeeCount = 0;
-        try {
-            userCount = await User_1.User.countDocuments();
-            complaintCount = await Complaint_1.Complaint.countDocuments();
-            employeeCount = await Employee_1.Employee.countDocuments();
-        }
-        catch { }
-        console.log(`
+const server = app_1.default.listen(PORT, async () => {
+    console.log(`
 =====================================================
   🏛️  CIVICS PLUS - TAMIL NADU CIVIC AUTHORITY
 =====================================================
   🚀 Server running on: http://localhost:${PORT}
   📡 API Health:        http://localhost:${PORT}/api/health
   🍃 Database Engine:   MongoDB (Permanent Source of Truth)
-  👥 Registered Users:  ${userCount} accounts
-  👔 Field Employees:   ${employeeCount} staff
-  📋 Active Complaints: ${complaintCount} tickets
   🛡️  Presence Engine:  Real-time ONLINE / OFFLINE tracking
 =====================================================
-    `);
-    });
-}
-if (!process.env.VERCEL) {
-    startServer();
-}
+  `);
+    try {
+        await (0, db_1.connectDb)();
+        const userCount = await User_1.User.countDocuments().catch(() => 0);
+        const complaintCount = await Complaint_1.Complaint.countDocuments().catch(() => 0);
+        const employeeCount = await Employee_1.Employee.countDocuments().catch(() => 0);
+        console.log(`✔ Database connected: ${userCount} users, ${employeeCount} employees, ${complaintCount} reports.`);
+    }
+    catch (err) {
+        console.warn('Initial background DB connection attempt:', err.message);
+    }
+});
 exports.default = app_1.default;
 module.exports = app_1.default;
+module.exports.default = app_1.default;

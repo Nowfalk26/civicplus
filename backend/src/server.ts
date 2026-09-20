@@ -6,43 +6,30 @@ import { Employee } from './models/Employee';
 
 const PORT = Number(process.env.PORT) || 3000;
 
-async function startServer() {
-  try {
-    await connectDb();
-    console.log('✔ MongoDB connection primed and validated.');
-  } catch (error: any) {
-    console.error('CRITICAL: Could not establish MongoDB connection:', error);
-  }
-
-  app.listen(PORT, async () => {
-    let userCount = 0;
-    let complaintCount = 0;
-    let employeeCount = 0;
-    try {
-      userCount = await User.countDocuments();
-      complaintCount = await Complaint.countDocuments();
-      employeeCount = await Employee.countDocuments();
-    } catch {}
-
-    console.log(`
+const server = app.listen(PORT, async () => {
+  console.log(`
 =====================================================
   🏛️  CIVICS PLUS - TAMIL NADU CIVIC AUTHORITY
 =====================================================
   🚀 Server running on: http://localhost:${PORT}
   📡 API Health:        http://localhost:${PORT}/api/health
   🍃 Database Engine:   MongoDB (Permanent Source of Truth)
-  👥 Registered Users:  ${userCount} accounts
-  👔 Field Employees:   ${employeeCount} staff
-  📋 Active Complaints: ${complaintCount} tickets
   🛡️  Presence Engine:  Real-time ONLINE / OFFLINE tracking
 =====================================================
-    `);
-  });
-}
+  `);
 
-if (!process.env.VERCEL) {
-  startServer();
-}
+  try {
+    await connectDb();
+    const userCount = await User.countDocuments().catch(() => 0);
+    const complaintCount = await Complaint.countDocuments().catch(() => 0);
+    const employeeCount = await Employee.countDocuments().catch(() => 0);
+    console.log(`✔ Database connected: ${userCount} users, ${employeeCount} employees, ${complaintCount} reports.`);
+  } catch (err: any) {
+    console.warn('Initial background DB connection attempt:', err.message);
+  }
+});
 
 export default app;
 module.exports = app;
+module.exports.default = app;
+

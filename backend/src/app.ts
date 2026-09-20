@@ -64,6 +64,19 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 app.use(cookieParser());
 
+// URL Normalization Middleware for Vercel Serverless Function & Reverse Proxies
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  // If Vercel rewrote request to a function endpoint, x-matched-path contains original client path
+  const matchedPath = req.headers['x-matched-path'] as string | undefined;
+  if (matchedPath && matchedPath !== '/' && matchedPath !== '/api' && !matchedPath.endsWith('.js')) {
+    if (req.url === '/' || req.url === '/api' || req.url === '/api/' || req.url.startsWith('/api?')) {
+      const queryString = req.url.includes('?') ? req.url.slice(req.url.indexOf('?')) : '';
+      req.url = matchedPath + queryString;
+    }
+  }
+  next();
+});
+
 // 1. Root Status Endpoint
 const rootHandler = (_req: Request, res: Response) => {
   const isDbReady = mongoose.connection.readyState === 1;
@@ -82,8 +95,7 @@ const rootHandler = (_req: Request, res: Response) => {
     },
   });
 };
-app.get('/', rootHandler);
-app.get('/api', rootHandler);
+app.get(['/', '/api', '/api/'], rootHandler);
 
 // 2. Real Health Check Endpoint: GET /api/health
 // Fulfills exact user specification: returns ok/degraded, backend service, and connected/disconnected
@@ -106,8 +118,7 @@ const healthHandler = (_req: Request, res: Response) => {
   });
 };
 
-app.get('/api/health', healthHandler);
-app.get('/health', healthHandler);
+app.get(['/api/health', '/health', '/api/healthz', '/healthz'], healthHandler);
 
 // Rate Limiting on API routes
 app.use('/api', globalRateLimiter);
@@ -115,7 +126,15 @@ app.use('/api', globalRateLimiter);
 // Database readiness middleware: operational API endpoints require active DB connection
 app.use(async (req: Request, res: Response, next: NextFunction) => {
   // Health checks bypass database readiness check
-  if (req.path === '/api/health' || req.path === '/health' || req.path === '/' || req.path === '/api') {
+  if (
+    req.path === '/api/health' ||
+    req.path === '/health' ||
+    req.path === '/' ||
+    req.path === '/api' ||
+    req.path === '/api/' ||
+    req.path === '/healthz' ||
+    req.path === '/api/healthz'
+  ) {
     return next();
   }
 
@@ -136,28 +155,21 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
   }
 });
 
-// Mount Routes (with and without /api prefix for deployment flexibility)
-app.use('/api/auth', authRoutes);
-app.use('/auth', authRoutes);
-
-app.use('/api/complaints', complaintRoutes);
-app.use('/complaints', complaintRoutes);
-
-app.use('/api/users', userRoutes);
-app.use('/users', userRoutes);
-
-app.use('/api/employees', employeeRoutes);
-app.use('/employees', employeeRoutes);
-
-app.use('/api/analytics', analyticsRoutes);
-app.use('/analytics', analyticsRoutes);
+// Mount Routes (with and without /api prefix for maximum deployment flexibility)
+app.use(['/api/auth', '/auth'], authRoutes);
+app.use(['/api/complaints', '/complaints'], complaintRoutes);
+app.use(['/api/users', '/users'], userRoutes);
+app.use(['/api/employees', '/employees'], employeeRoutes);
+app.use(['/api/analytics', '/analytics'], analyticsRoutes);
 
 // 404 Handler
-app.use((_req: Request, res: Response) => {
+app.use((req: Request, res: Response) => {
   res.status(404).json({
     success: false,
     errorCategory: 'ENDPOINT_NOT_FOUND',
     message: 'The requested API endpoint was not found on this server.',
+    path: req.path,
+    url: req.url,
   });
 });
 

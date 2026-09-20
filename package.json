@@ -5,7 +5,7 @@
   "description": "Civics Plus Civic Complaint Platform for Tamil Nadu (Fullstack)",
   "scripts": {
     "build": "node scripts/build.js",
-    "postinstall": "cd backend && npm install",
+    "postinstall": "node -e \"if (require('fs').existsSync('backend')) require('child_process').execSync('npm --prefix backend install', {stdio:'inherit'})\"",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:backend": "cd backend && npm run dev"
   },

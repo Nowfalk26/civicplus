@@ -1,4 +1,4 @@
-const app = require('../backend/dist/app').default || require('../backend/dist/app');
+const app = require('../dist/app').default || require('../dist/app');
 
 module.exports = (req, res) => {
   if (!req.url || req.url === '/' || req.url === '') {

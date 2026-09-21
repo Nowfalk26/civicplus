@@ -25,7 +25,7 @@ export function generateAccessToken(payload: {
   email: string;
   role: UserRole;
 }): string {
-  return jwt.sign(payload, ACCESS_SECRET, { expiresIn: '15m' });
+  return jwt.sign(payload, ACCESS_SECRET, { expiresIn: '7d' });
 }
 
 export function generateRefreshToken(payload: {
@@ -33,7 +33,7 @@ export function generateRefreshToken(payload: {
   email: string;
   role: UserRole;
 }): string {
-  return jwt.sign(payload, REFRESH_SECRET, { expiresIn: '7d' });
+  return jwt.sign(payload, REFRESH_SECRET, { expiresIn: '30d' });
 }
 
 export function verifyAccessToken(token: string): JwtPayload {

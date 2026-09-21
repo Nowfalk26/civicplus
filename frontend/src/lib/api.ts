@@ -132,28 +132,102 @@ export function resetBackendUrl(): void {
   }
 }
 
-// Attach JWT access token if present in localStorage
-api.interceptors.request.use((config) => {
+// Check if JWT token is expired or close to expiry (within thresholdSeconds)
+export function isTokenExpiredOrExpiringSoon(token: string, thresholdSeconds = 60): boolean {
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return true;
+    const payload = JSON.parse(atob(parts[1]));
+    if (!payload.exp) return false;
+    return payload.exp * 1000 - Date.now() < thresholdSeconds * 1000;
+  } catch {
+    return true;
+  }
+}
+
+let refreshingPromise: Promise<string | null> | null = null;
+
+export async function getValidAccessToken(): Promise<string | null> {
   const token = localStorage.getItem('civics_access_token');
-  if (token && config.headers) {
-    config.headers.Authorization = `Bearer ${token}`;
+  if (token && !isTokenExpiredOrExpiringSoon(token)) {
+    return token;
+  }
+
+  const refreshToken = localStorage.getItem('civics_refresh_token');
+  if (!refreshToken) {
+    return token;
+  }
+
+  // Deduplicate concurrent token refresh calls
+  if (refreshingPromise) {
+    return refreshingPromise;
+  }
+
+  refreshingPromise = (async () => {
+    try {
+      const res = await axios.post(
+        `${API_URL}/auth/refresh`,
+        { refreshToken },
+        { withCredentials: true }
+      );
+      if (res.data?.accessToken) {
+        localStorage.setItem('civics_access_token', res.data.accessToken);
+        return res.data.accessToken as string;
+      }
+      return null;
+    } catch {
+      localStorage.removeItem('civics_access_token');
+      localStorage.removeItem('civics_refresh_token');
+      localStorage.removeItem('civics_user');
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('civics_session_expired'));
+      }
+      return null;
+    } finally {
+      refreshingPromise = null;
+    }
+  })();
+
+  return refreshingPromise;
+}
+
+// Attach JWT access token proactively refreshing if expired before sending
+api.interceptors.request.use(async (config) => {
+  const isAuthLoginUrl =
+    config.url?.includes('/auth/login') ||
+    config.url?.includes('/auth/civic') ||
+    config.url?.includes('/auth/officer') ||
+    config.url?.includes('/auth/employee') ||
+    config.url?.includes('/auth/controller') ||
+    config.url?.includes('/auth/refresh');
+
+  if (!isAuthLoginUrl) {
+    const validToken = await getValidAccessToken();
+    if (validToken && config.headers) {
+      config.headers.Authorization = `Bearer ${validToken}`;
+    }
+  } else {
+    const token = localStorage.getItem('civics_access_token');
+    if (token && config.headers) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
   }
   return config;
 });
 
-// Handle 401 response and token refresh
+// Fallback 401 handler and token refresh if a token was unexpectedly rejected
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
     if (error.response?.status === 401 && !originalRequest._retry) {
-      // Do not attempt refresh on auth login endpoints
       const isAuthLoginUrl =
         originalRequest.url?.includes('/auth/login') ||
         originalRequest.url?.includes('/auth/civic') ||
         originalRequest.url?.includes('/auth/officer') ||
         originalRequest.url?.includes('/auth/employee') ||
-        originalRequest.url?.includes('/auth/controller');
+        originalRequest.url?.includes('/auth/controller') ||
+        originalRequest.url?.includes('/auth/refresh');
 
       if (isAuthLoginUrl) {
         return Promise.reject(error);
@@ -163,14 +237,27 @@ api.interceptors.response.use(
       const refreshToken = localStorage.getItem('civics_refresh_token');
       if (refreshToken) {
         try {
-          const res = await axios.post(
-            `${API_URL}/auth/refresh`,
-            { refreshToken },
-            { withCredentials: true }
-          );
-          if (res.data?.accessToken) {
-            localStorage.setItem('civics_access_token', res.data.accessToken);
-            originalRequest.headers.Authorization = `Bearer ${res.data.accessToken}`;
+          if (!refreshingPromise) {
+            refreshingPromise = (async () => {
+              try {
+                const res = await axios.post(
+                  `${API_URL}/auth/refresh`,
+                  { refreshToken },
+                  { withCredentials: true }
+                );
+                if (res.data?.accessToken) {
+                  localStorage.setItem('civics_access_token', res.data.accessToken);
+                  return res.data.accessToken as string;
+                }
+                return null;
+              } finally {
+                refreshingPromise = null;
+              }
+            })();
+          }
+          const newAccessToken = await refreshingPromise;
+          if (newAccessToken) {
+            originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
             return api(originalRequest);
           }
         } catch {

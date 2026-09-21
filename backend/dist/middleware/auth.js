@@ -16,10 +16,10 @@ const db_1 = require("../lib/db");
 const ACCESS_SECRET = process.env.JWT_ACCESS_SECRET || 'civics_plus_super_secret_access_key_tamil_nadu_2026';
 const REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || 'civics_plus_super_secret_refresh_key_tamil_nadu_2026';
 function generateAccessToken(payload) {
-    return jsonwebtoken_1.default.sign(payload, ACCESS_SECRET, { expiresIn: '15m' });
+    return jsonwebtoken_1.default.sign(payload, ACCESS_SECRET, { expiresIn: '7d' });
 }
 function generateRefreshToken(payload) {
-    return jsonwebtoken_1.default.sign(payload, REFRESH_SECRET, { expiresIn: '7d' });
+    return jsonwebtoken_1.default.sign(payload, REFRESH_SECRET, { expiresIn: '30d' });
 }
 function verifyAccessToken(token) {
     return jsonwebtoken_1.default.verify(token, ACCESS_SECRET);

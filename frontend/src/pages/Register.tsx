@@ -66,7 +66,7 @@ export const Register: React.FC = () => {
         setAuth(user, accessToken, refreshToken);
         toast.success(
           language === 'en'
-            ? 'Account registered successfully! Welcome to Civics Plus.'
+            ? 'Account registered successfully! Welcome to Civic+.'
             : 'கணக்கு வெற்றிகரமாக பதிவு செய்யப்பட்டது!'
         );
         navigate('/citizen/dashboard');

@@ -115,7 +115,7 @@ export const authController = {
       const userObj = newUser.toJSON();
       res.status(201).json({
         success: true,
-        message: 'Registration successful. Welcome to Civics Plus!',
+        message: 'Registration successful. Welcome to Civic+!',
         user: userObj,
         accessToken,
         refreshToken,

@@ -10,10 +10,10 @@ export const AdminSettings: React.FC = () => {
 
   // Template editor
   const [smsTemplate, setSmsTemplate] = useState(
-    '[Civics Plus TN] உங்கள் புகார் {COMPLAINT_ID} வெற்றிகரமாக பதிவு செய்யப்பட்டது. Track at civicsplus.tn.gov.in'
+    '[Civic+ TN] உங்கள் புகார் {COMPLAINT_ID} வெற்றிகரமாக பதிவு செய்யப்பட்டது. Track at civicplus.tn.gov.in'
   );
   const [banTemplate, setBanTemplate] = useState(
-    'Civics Plus TN: Your account has been temporarily suspended due to civic fraud violations until {BANNED_DATE}.'
+    'Civic+ TN: Your account has been temporarily suspended due to civic fraud violations until {BANNED_DATE}.'
   );
 
   const handleSaveSettings = () => {

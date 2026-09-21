@@ -22,7 +22,7 @@ export const Login: React.FC = () => {
           </h1>
           <p className="text-xs text-on-surface-variant max-w-md mx-auto">
             {language === 'en'
-              ? 'Civics Plus maintains distinct, highly secure login gateways for Residents, Verified Civic Officers, and State Controllers.'
+              ? 'Civic+ maintains distinct, highly secure login gateways for Residents, Verified Civic Officers, and State Controllers.'
               : 'குடிமக்கள், கள அலுவலர்கள் மற்றும் மாநில தலைமை கட்டுப்பாட்டாளருக்கான பிரத்யேக நுழைவாயில்கள்.'}
           </p>
         </div>

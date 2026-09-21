@@ -17,29 +17,30 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
 
   const getPortalBadge = () => {
     if (!user) return null;
+    const isTa = language === 'ta';
     switch (user.role) {
       case 'ADMIN':
         return (
           <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-100 text-purple-800 border border-purple-200">
-            Control Portal • நிர்வாகி
+            {isTa ? 'கட்டுப்பாட்டு பலகை • நிர்வாகி' : 'Control Portal'}
           </span>
         );
       case 'OFFICER':
         return (
           <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-            Officer Portal • அதிகாரி
+            {isTa ? 'அதிகாரி போர்டல் • அதிகாரி' : 'Officer Portal'}
           </span>
         );
       case 'EMPLOYEE':
         return (
           <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
-            Employee Workspace • களப் பணியாளர்
+            {isTa ? 'களப் பணியாளர் போர்டல்' : 'Employee Workspace'}
           </span>
         );
       default:
         return (
           <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-            Citizen Portal • குடிமக்கள்
+            {isTa ? 'குடிமக்கள் போர்டல்' : 'Citizen Portal'}
           </span>
         );
     }
@@ -67,14 +68,16 @@ export const Navbar: React.FC<NavbarProps> = ({ onToggleSidebar }) => {
             <div className="flex flex-col">
               <div className="flex items-center gap-1.5">
                 <span className="font-bold text-lg text-on-surface tracking-tight leading-none">
-                  Civics Plus
+                  Civic+
                 </span>
-                <span className="text-xs font-medium text-on-surface-variant leading-none hidden sm:inline">
-                  குடிமக்கள் பிளஸ்
-                </span>
+                {language === 'ta' && (
+                  <span className="text-xs font-semibold text-primary leading-none hidden sm:inline">
+                    குடிமக்கள் பிளஸ்
+                  </span>
+                )}
               </div>
               <span className="text-[11px] font-semibold text-primary leading-none mt-1">
-                Govt. of Tamil Nadu • தமிழ்நாடு அரசு
+                {language === 'ta' ? 'தமிழ்நாடு அரசு' : 'Govt. of Tamil Nadu'}
               </span>
             </div>
           </Link>

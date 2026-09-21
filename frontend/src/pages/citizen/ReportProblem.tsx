@@ -258,7 +258,7 @@ export const ReportProblem: React.FC = () => {
   // Success Screen
   if (submittedComplaint) {
     const shareText = encodeURIComponent(
-      `Civics Plus TN: My civic complaint #${submittedComplaint.complaintId} regarding ${submittedComplaint.category} in ${submittedComplaint.location} has been registered with Tamil Nadu Municipal Authority.`
+      `Civic+ TN: My civic complaint #${submittedComplaint.complaintId} regarding ${submittedComplaint.category} in ${submittedComplaint.location} has been registered with Tamil Nadu Municipal Authority.`
     );
 
     return (
@@ -321,7 +321,7 @@ export const ReportProblem: React.FC = () => {
               <button
                 onClick={() => {
                   navigator.clipboard.writeText(
-                    `Civics Plus Complaint ID: ${submittedComplaint.complaintId}`
+                    `Civic+ Complaint ID: ${submittedComplaint.complaintId}`
                   );
                   toast.success('Complaint ID copied to clipboard!');
                 }}

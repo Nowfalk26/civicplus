@@ -85,7 +85,7 @@ const rootHandler = (_req: Request, res: Response) => {
     status: isDbReady ? 'ok' : 'degraded',
     service: 'backend',
     database: isDbReady ? 'connected' : 'disconnected',
-    platform: 'Civics Plus Tamil Nadu Backend API',
+    platform: 'Civic+ Tamil Nadu Backend API',
     endpoints: {
       health: '/api/health',
       auth: '/api/auth',
@@ -115,7 +115,7 @@ const healthHandler = async (_req: Request, res: Response) => {
     status: isDbReady ? 'ok' : 'degraded',
     service: 'backend',
     database: isDbReady ? 'connected' : 'disconnected',
-    platform: 'Civics Plus - Tamil Nadu Civic Complaints',
+    platform: 'Civic+ - Tamil Nadu Civic Complaints',
     readyState: mongoose.connection.readyState,
     timestamp: new Date().toISOString(),
     version: '2.0.0',

@@ -7,6 +7,14 @@
     @apply bg-surface text-on-surface antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
+
+  /* Explicit Tamil typography when Tamil is selected */
+  html[lang="ta"],
+  body.lang-ta,
+  [data-lang="ta"],
+  .lang-ta {
+    font-family: 'Noto Sans Tamil', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  }
 }
 
 /* Material Symbols configuration */

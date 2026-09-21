@@ -77,7 +77,7 @@ export const ComplaintDetail: React.FC = () => {
       : null);
 
   const shareText = encodeURIComponent(
-    `Civics Plus TN: Track civic issue #${complaint.complaintId} (${complaint.category}) in ${complaint.location}. Status: ${complaint.status}`
+    `Civic+ TN: Track civic issue #${complaint.complaintId} (${complaint.category}) in ${complaint.location}. Status: ${complaint.status}`
   );
 
   return (

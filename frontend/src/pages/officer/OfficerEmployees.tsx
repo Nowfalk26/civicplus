@@ -301,7 +301,7 @@ export const OfficerEmployees: React.FC = () => {
                 type="button"
                 onClick={() => {
                   navigator.clipboard.writeText(
-                    `Civics Plus Employee Login\nID: ${createdCredentials.employeeId}\nEmail: ${createdCredentials.email}\nPassword: ${createdCredentials.tempPassword}\nPortal: ${window.location.origin}/employee/login`
+                    `Civic+ Employee Login\nID: ${createdCredentials.employeeId}\nEmail: ${createdCredentials.email}\nPassword: ${createdCredentials.tempPassword}\nPortal: ${window.location.origin}/employee/login`
                   );
                   toast.success('Credentials copied to clipboard!');
                 }}

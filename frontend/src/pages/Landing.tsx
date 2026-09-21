@@ -310,7 +310,9 @@ export const Landing: React.FC = () => {
       <footer className="mt-auto bg-white border-t border-surface-container-high py-8 text-center text-xs text-on-surface-variant">
         <div className="max-w-7xl mx-auto px-4 space-y-2">
           <p className="font-bold text-on-surface">
-            Civics Plus (குடிமக்கள் பிளஸ்) • Government of Tamil Nadu Civic Complaint Platform
+            {language === 'ta'
+              ? 'Civic+ (குடிமக்கள் பிளஸ்) • தமிழ்நாடு அரசு குடிமக்கள் குறைதீர்க்கும் தளம்'
+              : 'Civic+ • Government of Tamil Nadu Civic Complaint Platform'}
           </p>
           <p>
             Developed with React.js, TypeScript, PostgreSQL (Supabase), Leaflet.js, and AI Fraud Detection Engine.

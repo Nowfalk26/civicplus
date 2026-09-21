@@ -58,19 +58,19 @@ export const StartupSplash: React.FC<StartupSplashProps> = ({ onFinish }) => {
 
   return (
     <div
-      aria-label="Civics Plus Startup Screen"
+      aria-label="Civic+ Startup Screen"
       className={`fixed inset-0 z-[99999] bg-white flex flex-col items-center justify-center select-none overflow-hidden transition-opacity duration-700 ease-out ${
         stage === 'fading' ? 'opacity-0 pointer-events-none' : 'opacity-100'
       }`}
     >
       {/* Centered Media Container */}
       <div className="relative w-full max-w-sm sm:max-w-md md:max-w-lg aspect-square flex items-center justify-center p-6">
-        {/* Exact CIVICS PLUS Logo Image */}
+        {/* Exact CIVIC+ Logo Image */}
         {(stage === 'logo' || stage === 'fading') && (
           <div className="w-full h-full flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-500">
             <img
               src="/civicsplus-logo.png"
-              alt="Civics Plus"
+              alt="Civic+"
               className="w-full h-full object-contain drop-shadow-sm"
               loading="eager"
             />
@@ -86,7 +86,7 @@ export const StartupSplash: React.FC<StartupSplashProps> = ({ onFinish }) => {
           <span className="w-2 h-2 rounded-full bg-primary/30 animate-pulse delay-200" />
         </div>
         <p className="text-[11px] font-semibold text-on-surface-variant tracking-wider uppercase">
-          Civics Plus • Tamil Nadu
+          Civic+ • Tamil Nadu
         </p>
       </div>
 

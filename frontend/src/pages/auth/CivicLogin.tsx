@@ -499,7 +499,7 @@ export const CivicLogin: React.FC = () => {
 
         {/* Registration CTA */}
         <p className="text-center text-xs text-on-surface-variant">
-          {language === 'en' ? 'New resident to Civics Plus?' : 'புதிய குடிமகனா?'}{' '}
+          {language === 'en' ? 'New resident to Civic+?' : 'புதிய குடிமகனா?'}{' '}
           <Link to="/register" className="font-bold text-emerald-700 hover:underline">
             {language === 'en' ? 'Register here' : 'இங்கே பதிவு செய்க'}
           </Link>

@@ -50,10 +50,24 @@ import { AdminProfileRequests } from './pages/admin/AdminProfileRequests';
 
 import { StartupSplash } from './components/ui/StartupSplash';
 import { BackendStatusBadge } from './components/ui/BackendStatusBadge';
+import { useStore } from './store/useStore';
 
 const queryClient = new QueryClient();
 
 export const App: React.FC = () => {
+  const { language } = useStore();
+
+  React.useEffect(() => {
+    document.documentElement.lang = language;
+    if (language === 'ta') {
+      document.body.classList.add('lang-ta');
+      document.title = 'Civic+ | தமிழ்நாடு குடிமக்கள் குறைதீர்க்கும் தளம்';
+    } else {
+      document.body.classList.remove('lang-ta');
+      document.title = 'Civic+ | Tamil Nadu Civic Complaint Platform';
+    }
+  }, [language]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <StartupSplash />

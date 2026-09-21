@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { api } from '../lib/api';
 
 export interface User {
   id: string;
@@ -136,16 +137,7 @@ export const useStore = create<AppState>((set) => {
 
     logout: () => {
       try {
-        const token = localStorage.getItem('civics_access_token');
-        if (token) {
-          fetch('/api/auth/logout', {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${token}`,
-              'Content-Type': 'application/json',
-            },
-          }).catch(() => {});
-        }
+        api.post('/auth/logout').catch(() => {});
       } catch (err) {}
       localStorage.removeItem('civics_user');
       localStorage.removeItem('civics_access_token');

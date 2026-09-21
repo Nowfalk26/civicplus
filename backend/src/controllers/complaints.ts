@@ -13,22 +13,41 @@ import { evaluateComplaintFraud } from '../services/fraudDetection';
 import { uploadToCloudinary } from '../middleware/upload';
 import { smsService } from '../services/sms';
 import { emailService } from '../services/email';
+import { validateCivicImage } from '../services/imageValidation';
 
-const createComplaintSchema = z.object({
-  category: z.enum([
-    'ROAD_DAMAGE',
-    'STREET_LIGHT',
-    'ELECTRICAL_WIRE',
-    'GARBAGE_WASTE',
-    'STORM_WATER_DRAIN',
-    'PUBLIC_SPACE',
-  ]),
-  description: z.string().min(10, 'Please describe the issue in at least 10 characters').max(500),
-  location: z.string().min(3, 'Location is required'),
-  latitude: z.coerce.number().min(8).max(14),
-  longitude: z.coerce.number().min(76).max(81),
-  priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).default('MEDIUM'),
-});
+const createComplaintSchema = z
+  .object({
+    category: z.enum([
+      'ROAD_DAMAGE',
+      'STREET_LIGHT',
+      'ELECTRICAL_WIRE',
+      'GARBAGE_WASTE',
+      'STORM_WATER_DRAIN',
+      'PUBLIC_SPACE',
+    ]),
+    description: z.string().optional().default(''),
+    voiceAudio: z.string().optional(),
+    voiceDuration: z.coerce.number().optional().default(0),
+    location: z.string().min(3, 'Location is required'),
+    district: z.string().optional(),
+    latitude: z.coerce.number().min(8).max(14),
+    longitude: z.coerce.number().min(76).max(81),
+    priority: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']).default('MEDIUM'),
+    photos: z.array(z.string()).optional(),
+    photoUrl: z.string().optional(),
+    imageValidation: z.any().optional(),
+  })
+  .refine(
+    (data) => {
+      const hasText = Boolean(data.description && data.description.trim().length > 0);
+      const hasVoice = Boolean(data.voiceAudio && data.voiceAudio.trim().length > 0);
+      return hasText || hasVoice;
+    },
+    {
+      message: 'Please describe the civic issue using text, voice, or both.',
+      path: ['description'],
+    }
+  );
 
 export const complaintController = {
   // GET /api/complaints
@@ -154,6 +173,22 @@ export const complaintController = {
     }
   },
 
+  // POST /api/complaints/validate-image
+  validateImage: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+    try {
+      const { category, photo } = req.body;
+      if (!category || !photo) {
+        res.status(400).json({ success: false, message: 'Category and photo are required for validation.' });
+        return;
+      }
+      const validation = await validateCivicImage(category, photo);
+      res.json({ success: true, validation });
+    } catch (error: any) {
+      console.error('validateImage error:', error);
+      res.status(500).json({ success: false, message: 'Failed to validate image.' });
+    }
+  },
+
   // POST /api/complaints
   create: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
@@ -172,20 +207,43 @@ export const complaintController = {
         return;
       }
 
-      const { category, description, location, latitude, longitude, priority } = validation.data;
+      const { category, description, voiceAudio, voiceDuration, location, district, latitude, longitude, priority } = validation.data;
 
       // Handle photos from files or body
       const photoUrls: string[] = [];
+      const userUploadedPhotos: string[] = [];
       const files = req.files as Express.Multer.File[];
       if (files && files.length > 0) {
         for (const file of files) {
           const url = await uploadToCloudinary(file.buffer);
           photoUrls.push(url);
+          userUploadedPhotos.push(url);
         }
       } else if (req.body.photos && Array.isArray(req.body.photos)) {
         photoUrls.push(...req.body.photos);
+        userUploadedPhotos.push(...req.body.photos);
       } else if (req.body.photoUrl) {
         photoUrls.push(req.body.photoUrl);
+        userUploadedPhotos.push(req.body.photoUrl);
+      }
+
+      // Backend AI Vision Verification of uploaded photos
+      let primaryAiValidation: any = null;
+      if (userUploadedPhotos.length > 0) {
+        for (const photo of userUploadedPhotos) {
+          const imgVal = await validateCivicImage(category, photo);
+          if (!primaryAiValidation) {
+            primaryAiValidation = imgVal;
+          }
+          if (imgVal.decision === 'MISMATCH' || imgVal.decision === 'UNCERTAIN') {
+            res.status(422).json({
+              success: false,
+              message: `AI Image validation failed: The uploaded photo does not clearly match the selected category (${category}). Status: ${imgVal.decision}. Reason: ${imgVal.reason}`,
+              validation: imgVal,
+            });
+            return;
+          }
+        }
       }
 
       if (photoUrls.length === 0) {
@@ -229,8 +287,9 @@ export const complaintController = {
       const newComplaint = await Complaint.create({
         complaintId,
         category,
-        description,
+        description: description || '',
         location,
+        district: district || null,
         latitude,
         longitude,
         status: 'SUBMITTED',
@@ -238,6 +297,9 @@ export const complaintController = {
         assignmentStatus: 'PENDING_ASSIGNMENT',
         verificationStatus: 'PENDING_VERIFICATION',
         reportedById: req.user.id,
+        voiceRecordingUrl: voiceAudio || null,
+        voiceDuration: voiceDuration || 0,
+        aiValidation: primaryAiValidation || null,
         photos: photoUrls.map((url) => ({
           url,
           type: 'BEFORE',

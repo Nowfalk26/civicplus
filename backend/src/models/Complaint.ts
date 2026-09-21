@@ -80,6 +80,11 @@ export interface IComplaint extends Document {
   rejectionReason?: string | null;
   resolvedAt?: Date | null;
 
+  district?: string | null;
+  voiceRecordingUrl?: string | null;
+  voiceDuration?: number;
+  aiValidation?: any;
+
   photos: IComplaintPhoto[];
   timeline: IComplaintTimeline[];
   fraudFlags: IComplaintFraudFlag[];
@@ -148,6 +153,24 @@ const ComplaintSchema = new Schema<IComplaint>(
       required: true,
       trim: true,
       index: true,
+    },
+    district: {
+      type: String,
+      default: null,
+      trim: true,
+      index: true,
+    },
+    voiceRecordingUrl: {
+      type: String,
+      default: null,
+    },
+    voiceDuration: {
+      type: Number,
+      default: 0,
+    },
+    aiValidation: {
+      type: Schema.Types.Mixed,
+      default: null,
     },
     latitude: {
       type: Number,

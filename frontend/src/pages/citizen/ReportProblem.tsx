@@ -1,13 +1,29 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { useStore } from '../../store/useStore';
 import { LeafletMap } from '../../components/LeafletMap';
 import { MapErrorBoundary } from '../../components/ui/MapErrorBoundary';
-import { PhotoUpload } from '../../components/PhotoUpload';
+import { PhotoUpload, ImageValidationResult } from '../../components/PhotoUpload';
+import { VoiceRecorder } from '../../components/VoiceRecorder';
+import { reverseGeocodeCoordinates, ReverseGeocodeResult, matchTamilNaduDistrict } from '../../lib/geocoding';
 import { CATEGORY_INFO, TN_DISTRICTS } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { isValidLatLng } from '../../lib/mapService';
+import {
+  MapPin,
+  Sparkles,
+  AlertTriangle,
+  RotateCcw,
+  Volume2,
+  CheckCircle2,
+  ArrowRight,
+  ArrowLeft,
+  Navigation,
+  FileText,
+  Clock,
+  Send,
+} from 'lucide-react';
 
 export const ReportProblem: React.FC = () => {
   const { user, language } = useStore();
@@ -18,98 +34,189 @@ export const ReportProblem: React.FC = () => {
   const [submittedComplaint, setSubmittedComplaint] = useState<any | null>(null);
 
   // Form State
-  const [location, setLocation] = useState<string>(
-    user?.location ? `Ward 14, Palayamkottai, ${user.location}` : 'Ward 14, Tirunelveli'
-  );
-  const [latitude, setLatitude] = useState<number>(8.7139);
-  const [longitude, setLongitude] = useState<number>(77.7567);
   const [category, setCategory] = useState<string>('ROAD_DAMAGE');
-  const [photos, setPhotos] = useState<string[]>([]);
-  const [description, setDescription] = useState<string>('');
   const [priority, setPriority] = useState<string>('MEDIUM');
 
-  // Auto GPS detection handler with 2-stage fallback
+  // Step 3 State: Exact Map Location & Geocoding
+  const [latitude, setLatitude] = useState<number>(8.7139);
+  const [longitude, setLongitude] = useState<number>(77.7567);
+  const [locationAddress, setLocationAddress] = useState<string>('');
+  const [district, setDistrict] = useState<string>('Tirunelveli');
+  const [isGeocoding, setIsGeocoding] = useState<boolean>(false);
+  const [geocodingError, setGeocodingError] = useState<string | null>(null);
+  const geocodeRequestIdRef = useRef<number>(0);
+  const geocodeAbortRef = useRef<AbortController | null>(null);
+
+  // Step 4 State: Photo Upload & AI Vision Validation
+  const [photos, setPhotos] = useState<string[]>([]);
+  const [isImageValid, setIsImageValid] = useState<boolean>(true);
+  const [imageValidationData, setImageValidationData] = useState<ImageValidationResult | null>(null);
+
+  // Step 5 State: Description (Text and/or Voice)
+  const [description, setDescription] = useState<string>('');
+  const [voiceAudio, setVoiceAudio] = useState<string | null>(null);
+  const [voiceDuration, setVoiceDuration] = useState<number>(0);
+
+  // Auto-reverse geocode helper with race-condition guard
+  const performReverseGeocoding = async (lat: number, lng: number) => {
+    if (!isValidLatLng(lat, lng)) return;
+
+    // Increment request ID so previous pending requests are discarded
+    const currentRequestId = ++geocodeRequestIdRef.current;
+
+    if (geocodeAbortRef.current) {
+      geocodeAbortRef.current.abort();
+    }
+    const abortController = new AbortController();
+    geocodeAbortRef.current = abortController;
+
+    setIsGeocoding(true);
+    setGeocodingError(null);
+    // Clear stale address while resolving new coordinates
+    setLocationAddress('');
+
+    try {
+      const result: ReverseGeocodeResult = await reverseGeocodeCoordinates(
+        lat,
+        lng,
+        abortController.signal
+      );
+
+      // Check if this is still the latest request
+      if (currentRequestId !== geocodeRequestIdRef.current) {
+        return;
+      }
+
+      if (result.success && result.formattedAddress) {
+        setLocationAddress(result.formattedAddress);
+        if (result.district) {
+          const matched = matchTamilNaduDistrict(result.district);
+          if (matched) {
+            setDistrict(matched);
+          }
+        }
+      } else {
+        setLocationAddress(`Point (${lat.toFixed(6)}, ${lng.toFixed(6)})`);
+        setGeocodingError('Could not fetch exact address name. Using GPS coordinates.');
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
+      if (currentRequestId === geocodeRequestIdRef.current) {
+        console.error('Reverse geocoding error:', err);
+        setLocationAddress(`Point (${lat.toFixed(6)}, ${lng.toFixed(6)})`);
+        setGeocodingError('Geocoding service unavailable. You can enter the street name manually below.');
+      }
+    } finally {
+      if (currentRequestId === geocodeRequestIdRef.current) {
+        setIsGeocoding(false);
+      }
+    }
+  };
+
+  // Initial geocoding on mount
+  useEffect(() => {
+    performReverseGeocoding(latitude, longitude);
+  }, []);
+
+  // Map pin selection handler (tap on map)
+  const handleMapPinSelected = (coord: { lat: number; lng: number }) => {
+    setLatitude(coord.lat);
+    setLongitude(coord.lng);
+    performReverseGeocoding(coord.lat, coord.lng);
+    toast.success(`Location pinned: ${coord.lat.toFixed(5)}, ${coord.lng.toFixed(5)}`);
+  };
+
+  // GPS button handler
   const handleUseCurrentLocation = () => {
     if (!('geolocation' in navigator)) {
       toast.error('Geolocation is not supported by your browser.');
       return;
     }
 
-    toast.loading('Acquiring precise GPS coordinates...', { id: 'gps' });
+    toast.loading('Acquiring high-accuracy GPS coordinates...', { id: 'gps' });
 
-    const onSuccess = (position: GeolocationPosition) => {
-      const lat = Number(position.coords.latitude.toFixed(6));
-      const lng = Number(position.coords.longitude.toFixed(6));
-      if (!isValidLatLng(lat, lng)) {
-        toast.error('Invalid coordinates received.', { id: 'gps' });
-        return;
-      }
-      setLatitude(lat);
-      setLongitude(lng);
-      setLocation(`GPS Pin Location (${lat}, ${lng}), ${user?.location || 'Tamil Nadu'}`);
-      toast.success('GPS coordinates locked!', { id: 'gps' });
-    };
-
-    // Stage 1: Try GPS high accuracy
     navigator.geolocation.getCurrentPosition(
-      onSuccess,
-      (err) => {
-        if (err.code === err.PERMISSION_DENIED) {
-          toast.error(
-            'Location permission was denied. Please allow location access in your browser settings.',
-            { id: 'gps' }
-          );
+      (position) => {
+        const lat = Number(position.coords.latitude.toFixed(6));
+        const lng = Number(position.coords.longitude.toFixed(6));
+        if (!isValidLatLng(lat, lng)) {
+          toast.error('Invalid coordinates received.', { id: 'gps' });
           return;
         }
-        // Stage 2: Fallback to network
-        navigator.geolocation.getCurrentPosition(
-          onSuccess,
-          () => {
-            toast.error('Unable to determine device location.', { id: 'gps' });
-          },
-          { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
-        );
+        setLatitude(lat);
+        setLongitude(lng);
+        performReverseGeocoding(lat, lng);
+        toast.success('GPS coordinates locked!', { id: 'gps' });
       },
-      { enableHighAccuracy: true, timeout: 8000, maximumAge: 10000 }
+      (err) => {
+        if (err.code === err.PERMISSION_DENIED) {
+          toast.error('Location permission was denied in browser.', { id: 'gps' });
+        } else {
+          toast.error('Could not acquire device GPS. Please select on the map.', { id: 'gps' });
+        }
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 15000 }
     );
   };
 
-  const handleMapPinSelected = (coord: { lat: number; lng: number }) => {
-    setLatitude(coord.lat);
-    setLongitude(coord.lng);
-    toast.success(`Marker placed at ${coord.lat}, ${coord.lng}`);
+  // Handle Photo Validation Callback
+  const handlePhotoValidationChange = (isValid: boolean, valData?: ImageValidationResult | null) => {
+    setIsImageValid(isValid);
+    setImageValidationData(valData || null);
   };
 
+  // Step 5 Submit Complaint Handler
   const handleSubmitComplaint = async () => {
-    if (photos.length === 0) {
-      toast.error('Please upload at least 1 photo of the issue.');
-      setStep(3);
+    const hasText = Boolean(description && description.trim().length > 0);
+    const hasVoice = Boolean(voiceAudio && voiceAudio.trim().length > 0);
+
+    if (!hasText && !hasVoice) {
+      toast.error('Please describe the issue using text, voice, or both.');
       return;
     }
-    if (!description.trim() || description.length < 10) {
-      toast.error('Please provide a detailed description (min 10 chars).');
+
+    if (photos.length === 0) {
+      toast.error('Please upload at least 1 photo.');
+      setStep(4);
+      return;
+    }
+
+    if (!isImageValid || (imageValidationData && imageValidationData.decision !== 'MATCH')) {
+      toast.error('The uploaded photo does not match the selected category. Please upload an appropriate photo.');
       setStep(4);
       return;
     }
 
     setSubmitting(true);
     try {
-      const res = await api.post('/complaints', {
+      const finalLocation = locationAddress.trim() || `Location (${latitude.toFixed(6)}, ${longitude.toFixed(6)}), ${district}`;
+
+      const payload = {
         category,
-        description,
-        location,
+        description: description.trim(),
+        voiceAudio: voiceAudio || undefined,
+        voiceDuration: voiceDuration || 0,
+        location: finalLocation,
+        district,
         latitude,
         longitude,
         priority,
         photos,
-      });
+        imageValidation: imageValidationData,
+      };
+
+      const res = await api.post('/complaints', payload);
 
       if (res.data?.success && res.data?.complaint) {
         setSubmittedComplaint(res.data.complaint);
-        toast.success('Complaint submitted successfully!');
+        toast.success('Complaint submitted successfully to Tamil Nadu Municipal Queue!');
+      } else {
+        throw new Error(res.data?.message || 'Failed to submit complaint');
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to submit complaint.');
+      console.error('Submit complaint error:', err);
+      const msg = err.response?.data?.message || err.message || 'Failed to submit complaint.';
+      toast.error(msg);
     } finally {
       setSubmitting(false);
     }
@@ -148,10 +255,10 @@ export const ReportProblem: React.FC = () => {
     ],
   };
 
-  // Success Screen when Complaint is Submitted
+  // Success Screen
   if (submittedComplaint) {
     const shareText = encodeURIComponent(
-      `Civics Plus TN: My civic complaint #${submittedComplaint.complaintId} regarding ${submittedComplaint.category} in ${submittedComplaint.location} has been registered with Tamil Nadu Municipal Authority. Track resolution here!`
+      `Civics Plus TN: My civic complaint #${submittedComplaint.complaintId} regarding ${submittedComplaint.category} in ${submittedComplaint.location} has been registered with Tamil Nadu Municipal Authority.`
     );
 
     return (
@@ -181,8 +288,14 @@ export const ReportProblem: React.FC = () => {
             </div>
             <div className="flex justify-between py-1 border-b border-surface-container">
               <span className="text-on-surface-variant">Location:</span>
-              <span className="font-bold text-on-surface truncate max-w-[200px]">{submittedComplaint.location}</span>
+              <span className="font-bold text-on-surface truncate max-w-[220px]">{submittedComplaint.location}</span>
             </div>
+            {submittedComplaint.district && (
+              <div className="flex justify-between py-1 border-b border-surface-container">
+                <span className="text-on-surface-variant">District:</span>
+                <span className="font-bold text-on-surface">{submittedComplaint.district}</span>
+              </div>
+            )}
             <div className="flex justify-between py-1">
               <span className="text-on-surface-variant">Status:</span>
               <span className="font-bold text-red-600">SUBMITTED (In Review)</span>
@@ -241,7 +354,7 @@ export const ReportProblem: React.FC = () => {
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-6">
-      {/* Step Indicator Header */}
+      {/* 5-Step Indicator Header */}
       <div className="bg-white rounded-2xl p-5 border border-surface-container shadow-sm space-y-3">
         <div className="flex items-center justify-between">
           <div className="flex items-baseline gap-2">
@@ -250,15 +363,15 @@ export const ReportProblem: React.FC = () => {
           </div>
 
           <span className="text-xs font-bold text-on-surface">
-            {step === 1 && (language === 'en' ? 'Select Location • இருப்பிடம்' : 'இருப்பிடம்')}
-            {step === 2 && (language === 'en' ? 'Choose Category • பிரிவு' : 'பிரிவு')}
-            {step === 3 && (language === 'en' ? 'Upload Photos • புகைப்படம்' : 'புகைப்படம்')}
-            {step === 4 && (language === 'en' ? 'Description • விளக்கம்' : 'விளக்கம்')}
-            {step === 5 && (language === 'en' ? 'Review & Submit • சமர்ப்பித்தல்' : 'சமர்ப்பித்தல்')}
+            {step === 1 && (language === 'en' ? 'Choose Category • பிரிவு' : 'பிரிவு')}
+            {step === 2 && (language === 'en' ? 'Urgency & Priority • முன்னுரிமை' : 'முன்னுரிமை')}
+            {step === 3 && (language === 'en' ? 'Exact Map Location • இருப்பிடம்' : 'இருப்பிடம்')}
+            {step === 4 && (language === 'en' ? 'AI Photo Validation • புகைப்படம்' : 'புகைப்படம்')}
+            {step === 5 && (language === 'en' ? 'Description & Submit • விளக்கம்' : 'விளக்கம்')}
           </span>
         </div>
 
-        {/* 5-Step Progress Bar */}
+        {/* Progress Bar */}
         <div className="w-full h-2 rounded-full bg-surface-container overflow-hidden flex">
           <div
             className="h-full bg-primary rounded-full transition-all duration-300"
@@ -267,113 +380,16 @@ export const ReportProblem: React.FC = () => {
         </div>
       </div>
 
-      {/* STEP 1: LOCATION */}
+      {/* STEP 1: CATEGORY SELECTION */}
       {step === 1 && (
         <div className="bg-white rounded-2xl p-6 border border-surface-container shadow-sm space-y-5">
           <div className="space-y-1">
             <h2 className="text-xl font-bold text-on-surface">
-              {language === 'en' ? 'Pin Exact Issue Location' : 'சரியான இடத்தை தேர்வு செய்யவும்'}
+              {language === 'en' ? 'Select Civic Issue Category' : 'புகார் வகையைத் தேர்ந்தெடுக்கவும்'}
             </h2>
             <p className="text-xs text-on-surface-variant">
               {language === 'en'
-                ? 'Use automatic GPS or tap directly on the map to set coordinates.'
-                : 'தானியங்கி ஜி.பி.எஸ் பயன்படுத்தவும் அல்லது வரைபடத்தில் தட்டவும்.'}
-            </p>
-          </div>
-
-          {/* Current Location Button */}
-          <button
-            type="button"
-            onClick={handleUseCurrentLocation}
-            className="w-full min-h-[54px] bg-primary text-white rounded-xl px-4 py-3 flex items-center justify-between shadow-md hover:bg-primary-dark transition-all"
-          >
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center">
-                <span className="material-symbols-outlined text-[22px]">my_location</span>
-              </div>
-              <div className="text-left">
-                <p className="text-sm font-bold leading-tight">Use My Current Location</p>
-                <p className="text-[11px] opacity-90 leading-tight">எனது தற்போதைய இருப்பிடம்</p>
-              </div>
-            </div>
-            <span className="material-symbols-outlined text-[20px]">near_me</span>
-          </button>
-
-          {/* Interactive Map Picker */}
-          <div className="space-y-2">
-            <div className="flex items-center justify-between text-xs font-semibold text-on-surface-variant">
-              <span>Map Marker Picker (Click on map to position pin)</span>
-              <span className="font-mono text-[11px] text-primary">
-                {latitude.toFixed(4)}, {longitude.toFixed(4)}
-              </span>
-            </div>
-
-            <MapErrorBoundary>
-              <LeafletMap
-                center={[latitude, longitude]}
-                zoom={13}
-                interactivePicker={true}
-                selectedCoord={[latitude, longitude]}
-                onLocationSelect={handleMapPinSelected}
-                height="280px"
-              />
-            </MapErrorBoundary>
-          </div>
-
-          {/* Address and District selector */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-on-surface mb-1">
-                Street / Landmark Description
-              </label>
-              <input
-                type="text"
-                value={location}
-                onChange={(e) => setLocation(e.target.value)}
-                placeholder="e.g. Near Bus Stand, South Car Street"
-                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant focus:border-primary text-xs outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-on-surface mb-1">
-                Tamil Nadu District
-              </label>
-              <select
-                value={user?.location || 'Tirunelveli'}
-                onChange={(e) => setLocation(`Ward 12, ${e.target.value}`)}
-                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant focus:border-primary text-xs outline-none bg-white"
-              >
-                {TN_DISTRICTS.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setStep(2)}
-            className="w-full py-3 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
-          >
-            <span>Continue to Category</span>
-            <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-          </button>
-        </div>
-      )}
-
-      {/* STEP 2: CATEGORY */}
-      {step === 2 && (
-        <div className="bg-white rounded-2xl p-6 border border-surface-container shadow-sm space-y-5">
-          <div className="space-y-1">
-            <h2 className="text-xl font-bold text-on-surface">
-              {language === 'en' ? 'Select Complaint Category' : 'புகார் வகையைத் தேர்ந்தெடுக்கவும்'}
-            </h2>
-            <p className="text-xs text-on-surface-variant">
-              {language === 'en'
-                ? 'Assigns the complaint to the relevant engineering and municipal body.'
+                ? 'Select the category of the defect. AI vision will verify your photos against this category.'
                 : 'பொருத்தமான நகராட்சி துறைக்கு புகாரை அனுப்ப உதவுகிறது.'}
             </p>
           </div>
@@ -408,102 +424,326 @@ export const ReportProblem: React.FC = () => {
             ))}
           </div>
 
-          {/* Priority selection */}
-          <div className="space-y-2 pt-2 border-t border-surface-container">
-            <label className="block text-xs font-bold text-on-surface">Urgency / Priority</label>
-            <div className="grid grid-cols-4 gap-2">
-              {['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setPriority(p)}
-                  className={`py-2 rounded-xl text-xs font-bold transition-all border ${
-                    priority === p
-                      ? 'bg-primary text-white border-primary shadow-xs'
-                      : 'bg-surface-container-low text-on-surface-variant border-surface-container'
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
+          <button
+            type="button"
+            onClick={() => setStep(2)}
+            className="w-full py-3 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+          >
+            <span>Continue to Priority</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* STEP 2: PRIORITY */}
+      {step === 2 && (
+        <div className="bg-white rounded-2xl p-6 border border-surface-container shadow-sm space-y-5">
+          <div className="space-y-1">
+            <h2 className="text-xl font-bold text-on-surface">
+              {language === 'en' ? 'Select Urgency / Priority' : 'முன்னுரிமை நிலை'}
+            </h2>
+            <p className="text-xs text-on-surface-variant">
+              How severely does this affect pedestrian and vehicle safety?
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {[
+              {
+                id: 'LOW',
+                title: 'Low Urgency',
+                subtitle: 'Minor cosmetic issue, does not obstruct passage',
+                color: 'border-blue-500 bg-blue-50 dark:bg-blue-950/20 text-blue-700',
+              },
+              {
+                id: 'MEDIUM',
+                title: 'Medium Urgency',
+                subtitle: 'Moderate defect requiring scheduled repair',
+                color: 'border-amber-500 bg-amber-50 dark:bg-amber-950/20 text-amber-700',
+              },
+              {
+                id: 'HIGH',
+                title: 'High Urgency',
+                subtitle: 'Active hazard causing vehicular disruption',
+                color: 'border-orange-500 bg-orange-50 dark:bg-orange-950/20 text-orange-700',
+              },
+              {
+                id: 'CRITICAL',
+                title: 'Critical Emergency',
+                subtitle: 'Severe threat to human life or electric safety',
+                color: 'border-red-600 bg-red-50 dark:bg-red-950/20 text-red-700',
+              },
+            ].map((lvl) => (
+              <div
+                key={lvl.id}
+                onClick={() => setPriority(lvl.id)}
+                className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                  priority === lvl.id
+                    ? `${lvl.color} shadow-sm ring-1 ring-primary`
+                    : 'border-surface-container hover:border-outline-variant bg-white'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <h3 className="font-bold text-sm text-on-surface">{lvl.title}</h3>
+                  <span className="text-xs font-mono font-bold">{lvl.id}</span>
+                </div>
+                <p className="text-xs text-on-surface-variant mt-1">{lvl.subtitle}</p>
+              </div>
+            ))}
           </div>
 
           <div className="flex gap-3">
             <button
               type="button"
               onClick={() => setStep(1)}
-              className="w-1/3 py-3 rounded-xl bg-surface-container-high text-on-surface font-bold text-sm transition-colors"
+              className="w-1/3 py-3 rounded-xl bg-surface-container-high text-on-surface font-bold text-sm transition-colors flex items-center justify-center gap-1.5"
             >
-              Back
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back</span>
             </button>
             <button
               type="button"
               onClick={() => setStep(3)}
               className="flex-1 py-3 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
             >
-              <span>Continue to Photos</span>
-              <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+              <span>Continue to Map Location</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>
       )}
 
-      {/* STEP 3: UPLOAD PHOTOS */}
+      {/* STEP 3: EXACT MAP LOCATION & REVERSE GEOCODING */}
       {step === 3 && (
         <div className="bg-white rounded-2xl p-6 border border-surface-container shadow-sm space-y-5">
           <div className="space-y-1">
-            <h2 className="text-xl font-bold text-on-surface">
-              {language === 'en' ? 'Upload Photo Evidence' : 'புகைப்பட ஆதாரத்தை பதிவேற்றவும்'}
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-on-surface flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-primary" />
+                {language === 'en' ? 'Pin Exact Issue Location' : 'சரியான இடத்தை தேர்வு செய்யவும்'}
+              </h2>
+              <span className="text-xs font-mono bg-primary/10 text-primary font-bold px-2.5 py-1 rounded-full">
+                {latitude.toFixed(6)}, {longitude.toFixed(6)}
+              </span>
+            </div>
             <p className="text-xs text-on-surface-variant">
               {language === 'en'
-                ? 'Clear photos ensure swift triage and prevent fraudulent complaints (min 1, max 5).'
-                : 'தெளிவான படங்கள் உடனடி தீர்வு காண உதவும் (குறைந்தது 1, அதிகபட்சம் 5).'}
+                ? 'Click or drag the red pin on the map to place it at the exact civic issue. The address and district auto-sync directly from the selected coordinates.'
+                : 'வரைபடத்தில் தட்டி சரியான இடத்தை தேர்வு செய்யவும்.'}
             </p>
           </div>
 
-          <PhotoUpload photos={photos} onChange={setPhotos} maxPhotos={5} />
+          {/* Current Location Button */}
+          <button
+            type="button"
+            onClick={handleUseCurrentLocation}
+            className="w-full min-h-[50px] bg-primary text-white rounded-xl px-4 py-2.5 flex items-center justify-between shadow-md hover:bg-primary-dark transition-all active:scale-[0.99]"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                <Navigation className="w-4 h-4" />
+              </div>
+              <div className="text-left">
+                <p className="text-xs font-bold leading-tight">Use My Current Device GPS</p>
+                <p className="text-[10px] opacity-90 leading-tight">தானியங்கி இருப்பிடம் கண்டறிதல்</p>
+              </div>
+            </div>
+            <span className="text-xs font-semibold bg-white/20 px-2.5 py-1 rounded-lg">
+              Locate Me
+            </span>
+          </button>
+
+          {/* Interactive Map */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-xs font-semibold text-on-surface-variant">
+              <span>Interactive Leaflet Map (Tap or drag pin to position)</span>
+              {isGeocoding ? (
+                <span className="text-primary animate-pulse font-medium flex items-center gap-1">
+                  <RotateCcw className="w-3 h-3 animate-spin" /> Resolving address...
+                </span>
+              ) : (
+                <span className="text-emerald-600 font-bold flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Coordinates Locked
+                </span>
+              )}
+            </div>
+
+            <MapErrorBoundary>
+              <div className="rounded-xl overflow-hidden border border-surface-container shadow-inner">
+                <LeafletMap
+                  center={[latitude, longitude]}
+                  zoom={15}
+                  interactivePicker={true}
+                  selectedCoord={[latitude, longitude]}
+                  onLocationSelect={handleMapPinSelected}
+                  height="300px"
+                />
+              </div>
+            </MapErrorBoundary>
+          </div>
+
+          {/* Geocoding Notice / Error */}
+          {geocodingError && (
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl flex items-center justify-between gap-2 text-xs text-amber-800 dark:text-amber-300">
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>{geocodingError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => performReverseGeocoding(latitude, longitude)}
+                className="px-2.5 py-1 bg-amber-200 dark:bg-amber-800 hover:bg-amber-300 rounded font-bold text-[11px] shrink-0"
+              >
+                Retry
+              </button>
+            </div>
+          )}
+
+          {/* Synchronized Address & District Display */}
+          <div className="bg-surface-container-low p-4 rounded-xl border border-surface-container space-y-3">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-on-surface">
+                  Resolved Street / Area Address
+                </label>
+                <button
+                  type="button"
+                  onClick={() => performReverseGeocoding(latitude, longitude)}
+                  className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-1"
+                >
+                  <RotateCcw className="w-2.5 h-2.5" /> Re-sync
+                </button>
+              </div>
+              <input
+                type="text"
+                value={locationAddress}
+                onChange={(e) => setLocationAddress(e.target.value)}
+                placeholder={isGeocoding ? 'Fetching address from coordinates...' : 'e.g. South Car Street, Vannarpettai'}
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant focus:border-primary text-xs outline-none bg-white font-medium"
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-on-surface">
+                  Tamil Nadu District (Auto-matched from Coordinates)
+                </label>
+                <span className="text-[10px] text-slate-500 font-medium">Source: Pin Location</span>
+              </div>
+              <select
+                value={district}
+                onChange={(e) => setDistrict(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-outline-variant focus:border-primary text-xs outline-none bg-white font-medium"
+              >
+                {TN_DISTRICTS.map((d) => (
+                  <option key={d} value={d}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
 
           <div className="flex gap-3">
             <button
               type="button"
               onClick={() => setStep(2)}
-              className="w-1/3 py-3 rounded-xl bg-surface-container-high text-on-surface font-bold text-sm transition-colors"
+              className="w-1/3 py-3 rounded-xl bg-surface-container-high text-on-surface font-bold text-sm transition-colors flex items-center justify-center gap-1.5"
             >
-              Back
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back</span>
             </button>
             <button
               type="button"
               onClick={() => {
-                if (photos.length === 0) {
-                  toast.error('Please upload at least 1 photo.');
+                if (!isValidLatLng(latitude, longitude)) {
+                  toast.error('Please select valid coordinates on the map.');
                   return;
                 }
                 setStep(4);
               }}
               className="flex-1 py-3 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
             >
-              <span>Continue to Description</span>
-              <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
+              <span>Continue to Photos</span>
+              <ArrowRight className="w-4 h-4" />
             </button>
           </div>
         </div>
       )}
 
-      {/* STEP 4: DESCRIPTION */}
+      {/* STEP 4: AI IMAGE VALIDATION */}
       {step === 4 && (
         <div className="bg-white rounded-2xl p-6 border border-surface-container shadow-sm space-y-5">
           <div className="space-y-1">
-            <h2 className="text-xl font-bold text-on-surface">
-              {language === 'en' ? 'Describe the Civic Issue' : 'பிரச்சனையை விவரிக்கவும்'}
-            </h2>
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold text-on-surface flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-primary" />
+                {language === 'en' ? 'AI Photo Evidence Validation' : 'புகைப்பட ஆதார சரிபார்ப்பு'}
+              </h2>
+              <span className="text-xs bg-primary-light text-primary font-bold px-2.5 py-0.5 rounded-full">
+                {CATEGORY_INFO[category]?.labelEn}
+              </span>
+            </div>
             <p className="text-xs text-on-surface-variant">
-              Provide specific details (nearby shop, landmarks, hazard level). Max 500 characters.
+              Upload clear photo evidence (min 1, max 5). The AI vision engine will verify that the image matches the selected problem category ({CATEGORY_INFO[category]?.labelEn}).
             </p>
           </div>
 
-          {/* Quick chips */}
+          <PhotoUpload
+            photos={photos}
+            onChange={setPhotos}
+            maxPhotos={5}
+            category={category}
+            onValidationChange={handlePhotoValidationChange}
+          />
+
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setStep(3)}
+              className="w-1/3 py-3 rounded-xl bg-surface-container-high text-on-surface font-bold text-sm transition-colors flex items-center justify-center gap-1.5"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (photos.length === 0) {
+                  toast.error('Please upload at least 1 photo of the issue.');
+                  return;
+                }
+                if (!isImageValid || (imageValidationData && imageValidationData.decision !== 'MATCH')) {
+                  toast.error(
+                    `Photo verification failed: ${imageValidationData?.reason || 'The uploaded photo does not match the category'}. Please upload a matching photo.`
+                  );
+                  return;
+                }
+                setStep(5);
+              }}
+              className="flex-1 py-3 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
+            >
+              <span>Continue to Description</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* STEP 5: CIVIC ISSUE DESCRIPTION (TEXT AND/OR VOICE) + REVIEW & SUBMIT */}
+      {step === 5 && (
+        <div className="bg-white rounded-2xl p-6 border border-surface-container shadow-sm space-y-6">
+          <div className="space-y-1">
+            <h2 className="text-xl font-bold text-on-surface flex items-center gap-2">
+              <FileText className="w-5 h-5 text-primary" />
+              {language === 'en' ? 'Describe the Civic Issue' : 'பிரச்சனையை விவரிக்கவும்'}
+            </h2>
+            <p className="text-xs text-on-surface-variant">
+              You can describe the issue by typing text, recording a voice message, or both. At least one description method is required.
+            </p>
+          </div>
+
+          {/* Quick Suggestions Chips */}
           <div className="space-y-1.5">
             <p className="text-xs font-bold text-outline uppercase tracking-wider">
               Quick Suggestions
@@ -522,134 +762,96 @@ export const ReportProblem: React.FC = () => {
             </div>
           </div>
 
-          <div>
+          {/* Option A: Text Input */}
+          <div className="space-y-1">
+            <label className="block text-xs font-bold text-on-surface">
+              Option A: Written Description
+            </label>
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value.slice(0, 500))}
-              rows={4}
-              placeholder="Explain the issue clearly (e.g. Dangerously exposed cable near fruit stall on North Street...)"
-              className="w-full p-3 rounded-xl border border-outline-variant focus:border-primary text-sm outline-none resize-none"
+              rows={3}
+              placeholder="Explain what happened, any nearby landmarks or danger to citizens..."
+              className="w-full p-3 rounded-xl border border-outline-variant focus:border-primary text-xs outline-none resize-none font-sans"
             />
-            <div className="flex justify-between text-[11px] text-on-surface-variant mt-1">
-              <span>Minimum 10 characters required</span>
+            <div className="flex justify-between text-[11px] text-on-surface-variant">
+              <span>{description.trim().length > 0 ? `${description.length} chars` : 'Optional if voice note provided'}</span>
               <span>{description.length}/500</span>
             </div>
           </div>
 
-          <div className="flex gap-3">
-            <button
-              type="button"
-              onClick={() => setStep(3)}
-              className="w-1/3 py-3 rounded-xl bg-surface-container-high text-on-surface font-bold text-sm transition-colors"
-            >
-              Back
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                if (description.trim().length < 10) {
-                  toast.error('Description must be at least 10 characters.');
-                  return;
-                }
-                setStep(5);
-              }}
-              className="flex-1 py-3 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-md transition-all flex items-center justify-center gap-2"
-            >
-              <span>Review Summary</span>
-              <span className="material-symbols-outlined text-[18px]">arrow_forward</span>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* STEP 5: REVIEW & SUBMIT */}
-      {step === 5 && (
-        <div className="bg-white rounded-2xl p-6 border border-surface-container shadow-sm space-y-6">
+          {/* Option B: Voice Recording */}
           <div className="space-y-1">
-            <h2 className="text-xl font-bold text-on-surface">
-              {language === 'en' ? 'Review & Confirm Submission' : 'விவரங்களை சரிபார்த்து சமர்ப்பிக்கவும்'}
-            </h2>
-            <p className="text-xs text-on-surface-variant">
-              Confirm all details before submitting to Tamil Nadu Municipal Authority.
-            </p>
+            <label className="block text-xs font-bold text-on-surface">
+              Option B: Voice Description (Audio Recording)
+            </label>
+            <VoiceRecorder
+              onAudioRecorded={(audioUrl, duration) => {
+                setVoiceAudio(audioUrl);
+                setVoiceDuration(duration);
+              }}
+              existingAudioUrl={voiceAudio}
+            />
           </div>
 
-          <div className="bg-surface-container-low rounded-2xl p-5 border border-surface-container space-y-4 text-xs">
-            <div className="flex items-center justify-between border-b border-surface-container pb-2">
-              <span className="text-on-surface-variant font-medium">Category:</span>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-on-surface">{CATEGORY_INFO[category]?.labelEn}</span>
-                <button
-                  onClick={() => setStep(2)}
-                  className="text-primary hover:underline font-bold"
-                >
-                  Edit
-                </button>
+          {/* Comprehensive Review Summary Card */}
+          <div className="bg-surface-container-low rounded-2xl p-4 border border-surface-container space-y-3 text-xs mt-4">
+            <h3 className="font-bold text-on-surface border-b border-surface-container pb-1.5">
+              Review Report Summary
+            </h3>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="text-on-surface-variant">Category:</span>
+                <p className="font-bold text-on-surface">{CATEGORY_INFO[category]?.labelEn}</p>
+              </div>
+              <div>
+                <span className="text-on-surface-variant">Priority:</span>
+                <p className="font-bold text-primary">{priority}</p>
               </div>
             </div>
 
-            <div className="flex items-center justify-between border-b border-surface-container pb-2">
-              <span className="text-on-surface-variant font-medium">Location:</span>
-              <div className="flex items-center gap-2 max-w-[260px] truncate">
-                <span className="font-bold text-on-surface truncate">{location}</span>
-                <button
-                  onClick={() => setStep(1)}
-                  className="text-primary hover:underline font-bold shrink-0"
-                >
-                  Edit
-                </button>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between border-b border-surface-container pb-2">
-              <span className="text-on-surface-variant font-medium">Coordinates:</span>
-              <span className="font-mono text-on-surface font-bold">
-                {latitude.toFixed(6)}, {longitude.toFixed(6)}
-              </span>
-            </div>
-
-            <div className="flex items-center justify-between border-b border-surface-container pb-2">
-              <span className="text-on-surface-variant font-medium">Priority:</span>
-              <span className="font-bold text-primary">{priority}</span>
-            </div>
-
-            <div className="space-y-1">
-              <div className="flex justify-between">
-                <span className="text-on-surface-variant font-medium">Description:</span>
-                <button
-                  onClick={() => setStep(4)}
-                  className="text-primary hover:underline font-bold"
-                >
-                  Edit
-                </button>
-              </div>
-              <p className="p-2.5 bg-white rounded-xl border border-surface-container text-on-surface leading-relaxed">
-                {description}
+            <div>
+              <span className="text-on-surface-variant">Selected Location:</span>
+              <p className="font-bold text-on-surface">
+                {locationAddress || `Point (${latitude.toFixed(5)}, ${longitude.toFixed(5)})`}
+              </p>
+              <p className="text-[11px] text-slate-500">
+                District: <span className="font-semibold text-on-surface">{district}</span> • Coordinates: <span className="font-mono">{latitude.toFixed(6)}, {longitude.toFixed(6)}</span>
               </p>
             </div>
 
-            {/* Photo thumbnails */}
-            <div className="space-y-1">
-              <div className="flex justify-between">
-                <span className="text-on-surface-variant font-medium">
-                  Photos ({photos.length}):
-                </span>
-                <button
-                  onClick={() => setStep(3)}
-                  className="text-primary hover:underline font-bold"
-                >
-                  Edit
-                </button>
+            <div className="grid grid-cols-2 gap-2 pt-1 border-t border-surface-container">
+              <div>
+                <span className="text-on-surface-variant">Photos:</span>
+                <p className="font-semibold text-on-surface">{photos.length} uploaded</p>
               </div>
-              <div className="flex gap-2 overflow-x-auto pb-1">
-                {photos.map((p, i) => (
-                  <img
-                    key={i}
-                    src={p}
-                    alt="Upload thumbnail"
-                    className="w-16 h-16 rounded-xl object-cover border border-surface-container shrink-0"
-                  />
-                ))}
+              <div>
+                <span className="text-on-surface-variant">AI Vision Status:</span>
+                <p className="font-semibold text-emerald-600 flex items-center gap-1">
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Verified MATCH
+                </p>
+              </div>
+            </div>
+
+            <div className="pt-1 border-t border-surface-container">
+              <span className="text-on-surface-variant">Description Provided:</span>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                {description.trim().length > 0 && (
+                  <span className="px-2 py-0.5 rounded bg-blue-100 text-blue-800 text-[11px] font-bold">
+                    Text: {description.length} chars
+                  </span>
+                )}
+                {voiceAudio && (
+                  <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-800 text-[11px] font-bold flex items-center gap-1">
+                    <Volume2 className="w-3 h-3" /> Voice Note ({voiceDuration}s)
+                  </span>
+                )}
+                {!description.trim() && !voiceAudio && (
+                  <span className="text-red-600 font-bold">
+                    None yet (Please provide text or voice)
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -658,13 +860,14 @@ export const ReportProblem: React.FC = () => {
             <button
               type="button"
               onClick={() => setStep(4)}
-              className="w-1/3 py-3.5 rounded-xl bg-surface-container-high text-on-surface font-bold text-sm transition-colors"
+              className="w-1/3 py-3.5 rounded-xl bg-surface-container-high text-on-surface font-bold text-sm transition-colors flex items-center justify-center gap-1.5"
             >
-              Back
+              <ArrowLeft className="w-4 h-4" />
+              <span>Back</span>
             </button>
             <button
               type="button"
-              disabled={submitting}
+              disabled={submitting || (!description.trim() && !voiceAudio)}
               onClick={handleSubmitComplaint}
               className="flex-1 py-3.5 rounded-xl bg-primary hover:bg-primary-dark text-white font-bold text-sm shadow-lg shadow-primary/25 transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
@@ -675,7 +878,7 @@ export const ReportProblem: React.FC = () => {
               ) : (
                 <>
                   <span>Submit Complaint</span>
-                  <span className="material-symbols-outlined text-[20px]">send</span>
+                  <Send className="w-4 h-4" />
                 </>
               )}
             </button>

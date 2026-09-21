@@ -10,6 +10,8 @@ router.get('/', auth_1.authenticate, complaints_1.complaintController.getAll);
 router.get('/nearby', auth_1.authenticate, complaints_1.complaintController.getNearby);
 router.get('/user/:userId', auth_1.authenticate, complaints_1.complaintController.getByUser);
 router.get('/:id', auth_1.authenticate, complaints_1.complaintController.getById);
+// AI Vision Image Validation endpoint
+router.post('/validate-image', complaints_1.complaintController.validateImage);
 // Create complaint - citizen role, accepts up to 5 photos
 router.post('/', auth_1.authenticate, (0, auth_1.authorize)('CITIZEN', 'ADMIN'), upload_1.uploadMiddleware.array('photos', 5), complaints_1.complaintController.create);
 // Delete complaint - admin only

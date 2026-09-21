@@ -83,6 +83,24 @@ const ComplaintSchema = new mongoose_1.Schema({
         trim: true,
         index: true,
     },
+    district: {
+        type: String,
+        default: null,
+        trim: true,
+        index: true,
+    },
+    voiceRecordingUrl: {
+        type: String,
+        default: null,
+    },
+    voiceDuration: {
+        type: Number,
+        default: 0,
+    },
+    aiValidation: {
+        type: mongoose_1.Schema.Types.Mixed,
+        default: null,
+    },
     latitude: {
         type: Number,
         required: true,

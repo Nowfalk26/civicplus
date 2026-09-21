@@ -11,6 +11,9 @@ router.get('/nearby', authenticate, complaintController.getNearby);
 router.get('/user/:userId', authenticate, complaintController.getByUser);
 router.get('/:id', authenticate, complaintController.getById);
 
+// AI Vision Image Validation endpoint
+router.post('/validate-image', complaintController.validateImage);
+
 // Create complaint - citizen role, accepts up to 5 photos
 router.post(
   '/',

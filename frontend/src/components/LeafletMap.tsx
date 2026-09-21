@@ -256,6 +256,58 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
     }
   }, [center[0], center[1], zoom]);
 
+  // Render & update selected interactive location marker
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    if (!selectedCoord || !isValidLatLng(selectedCoord[0], selectedCoord[1])) {
+      if (pickerMarkerRef.current) {
+        pickerMarkerRef.current.remove();
+        pickerMarkerRef.current = null;
+      }
+      return;
+    }
+
+    const pinIcon = L.divIcon({
+      className: 'custom-selected-pin-marker',
+      html: `
+        <div style="position:relative; width:38px; height:38px; display:flex; align-items:center; justify-content:center; cursor:pointer;">
+          <div style="position:absolute; width:34px; height:34px; background:#e11d48; border-radius:50% 50% 50% 0; transform: rotate(-45deg); box-shadow: 0 4px 14px rgba(225,29,72,0.45); border: 3px solid #ffffff; display:flex; align-items:center; justify-content:center;">
+          </div>
+          <div style="position:absolute; width:12px; height:12px; background:#ffffff; border-radius:50%; z-index:2; box-shadow:0 1px 3px rgba(0,0,0,0.2);"></div>
+        </div>
+      `,
+      iconSize: [38, 38],
+      iconAnchor: [19, 38],
+      popupAnchor: [0, -38],
+    });
+
+    if (pickerMarkerRef.current) {
+      pickerMarkerRef.current.setLatLng(selectedCoord);
+    } else {
+      const marker = L.marker(selectedCoord, {
+        icon: pinIcon,
+        draggable: Boolean(interactivePicker),
+        zIndexOffset: 1000,
+      }).addTo(map);
+
+      if (interactivePicker && onLocationSelect) {
+        marker.on('dragend', () => {
+          const pos = marker.getLatLng();
+          if (isValidLatLng(pos.lat, pos.lng)) {
+            onLocationSelect({
+              lat: Number(pos.lat.toFixed(6)),
+              lng: Number(pos.lng.toFixed(6)),
+            });
+          }
+        });
+      }
+
+      pickerMarkerRef.current = marker;
+    }
+  }, [selectedCoord ? selectedCoord[0] : null, selectedCoord ? selectedCoord[1] : null, interactivePicker]);
+
   // Update complaints markers
   useEffect(() => {
     if (!mapInstanceRef.current || !markersLayerRef.current) return;
@@ -403,9 +455,23 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
         if (pickerMarkerRef.current) {
           pickerMarkerRef.current.setLatLng(selectedCoord);
         } else {
-          pickerMarkerRef.current = L.marker(selectedCoord, { icon: pickerIcon }).addTo(
-            mapInstanceRef.current
-          );
+          const marker = L.marker(selectedCoord, {
+            icon: pickerIcon,
+            draggable: interactivePicker,
+          }).addTo(mapInstanceRef.current);
+
+          if (interactivePicker) {
+            marker.on('dragend', () => {
+              const pos = marker.getLatLng();
+              const lat = Number(pos.lat.toFixed(6));
+              const lng = Number(pos.lng.toFixed(6));
+              if (isValidLatLng(lat, lng) && onLocationSelect) {
+                onLocationSelect({ lat, lng });
+              }
+            });
+          }
+
+          pickerMarkerRef.current = marker;
         }
       } else if (pickerMarkerRef.current) {
         pickerMarkerRef.current.remove();
@@ -414,7 +480,29 @@ export const LeafletMap: React.FC<LeafletMapProps> = ({
     } catch (err) {
       console.warn('Error updating picker marker:', err);
     }
-  }, [selectedCoord]);
+  }, [selectedCoord, interactivePicker, onLocationSelect]);
+
+  // Handle map click events in interactive picker mode
+  useEffect(() => {
+    if (!mapInstanceRef.current || !interactivePicker) return;
+    const map = mapInstanceRef.current;
+
+    const handleMapClick = (e: L.LeafletMouseEvent) => {
+      const lat = Number(e.latlng.lat.toFixed(6));
+      const lng = Number(e.latlng.lng.toFixed(6));
+      if (!isValidLatLng(lat, lng)) return;
+
+      if (onLocationSelect) {
+        onLocationSelect({ lat, lng });
+      }
+    };
+
+    map.on('click', handleMapClick);
+
+    return () => {
+      map.off('click', handleMapClick);
+    };
+  }, [interactivePicker, onLocationSelect]);
 
   // Update real user live location marker & accuracy circle
   useEffect(() => {

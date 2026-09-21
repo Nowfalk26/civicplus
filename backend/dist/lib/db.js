@@ -61,6 +61,31 @@ async function connectDb() {
                 return conn;
             }
             catch (err) {
+                // Fallback: If SRV DNS resolution fails (common in serverless/restricted environments), connect via direct replica set nodes
+                if ((err.message?.includes('querySrv') || err.message?.includes('ECONNREFUSED') || err.message?.includes('ETIMEDOUT')) &&
+                    configuredUri.includes('cluster0.obid4se.mongodb.net')) {
+                    console.warn('[MONGO] SRV DNS resolution failed. Retrying with direct replica set hosts...');
+                    try {
+                        let directUri = configuredUri
+                            .replace('mongodb+srv://', 'mongodb://')
+                            .replace('cluster0.obid4se.mongodb.net', 'ac-pvbvqlw-shard-00-00.obid4se.mongodb.net:27017,ac-pvbvqlw-shard-00-01.obid4se.mongodb.net:27017,ac-pvbvqlw-shard-00-02.obid4se.mongodb.net:27017');
+                        if (!directUri.includes('replicaSet=')) {
+                            directUri = directUri.includes('?')
+                                ? `${directUri}&ssl=true&replicaSet=atlas-wc41ru-shard-0&authSource=admin`
+                                : `${directUri}?ssl=true&replicaSet=atlas-wc41ru-shard-0&authSource=admin`;
+                        }
+                        const conn = await mongoose_1.default.connect(directUri, {
+                            serverSelectionTimeoutMS: 6000,
+                            connectTimeoutMS: 10000,
+                        });
+                        console.log('[MONGO] Connected successfully to persistent MongoDB via direct replica set.');
+                        await seedControllerAdmin();
+                        return conn;
+                    }
+                    catch (fallbackErr) {
+                        console.error('[MONGO] Direct replica set connection also failed:', fallbackErr.message);
+                    }
+                }
                 // Safe categorization of MongoDB connection errors
                 let errorCategory = 'CONNECTION_FAILED';
                 if (err.message?.includes('whitelisted') || err.message?.includes('SSL alert') || err.message?.includes('tlsv1 alert')) {

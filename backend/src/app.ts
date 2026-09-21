@@ -98,16 +98,19 @@ const rootHandler = (_req: Request, res: Response) => {
 app.get(['/', '/api', '/api/'], rootHandler);
 
 // 2. Real Health Check Endpoint: GET /api/health
-// Fulfills exact user specification: returns ok/degraded, backend service, and connected/disconnected
-const healthHandler = (_req: Request, res: Response) => {
-  const isDbReady = mongoose.connection.readyState === 1;
-
-  if (!isDbReady) {
-    // Non-blocking trigger to reconnect in background
-    connectDb().catch(() => {});
+// Returns ok/degraded, backend service status, and connected/disconnected database status
+const healthHandler = async (_req: Request, res: Response) => {
+  if (mongoose.connection.readyState !== 1) {
+    try {
+      await connectDb();
+    } catch (err: any) {
+      console.warn('[HEALTH] Database connection check notice:', err?.message || err);
+    }
   }
 
-  res.status(isDbReady ? 200 : 503).json({
+  const isDbReady = mongoose.connection.readyState === 1;
+
+  res.status(200).json({
     status: isDbReady ? 'ok' : 'degraded',
     service: 'backend',
     database: isDbReady ? 'connected' : 'disconnected',

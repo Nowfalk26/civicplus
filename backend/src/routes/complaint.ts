@@ -1,15 +1,15 @@
 import { Router } from 'express';
 import { complaintController } from '../controllers/complaints';
-import { authenticate, authorize } from '../middleware/auth';
+import { authenticate, optionalAuthenticate, authorize } from '../middleware/auth';
 import { uploadMiddleware } from '../middleware/upload';
 
 const router = Router();
 
-// Read operations - accessible to authenticated users
-router.get('/', authenticate, complaintController.getAll);
-router.get('/nearby', authenticate, complaintController.getNearby);
+// Read operations - public viewing with optional authentication
+router.get('/', optionalAuthenticate, complaintController.getAll);
+router.get('/nearby', optionalAuthenticate, complaintController.getNearby);
 router.get('/user/:userId', authenticate, complaintController.getByUser);
-router.get('/:id', authenticate, complaintController.getById);
+router.get('/:id', optionalAuthenticate, complaintController.getById);
 
 // AI Vision Image Validation endpoint
 router.post('/validate-image', complaintController.validateImage);

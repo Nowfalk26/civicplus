@@ -129,6 +129,44 @@ export async function authenticate(
 }
 
 /**
+ * Optional Authentication Middleware:
+ * If Authorization header or cookie is present and valid, attaches user to req.user.
+ * If not present or expired, proceeds without blocking (useful for public map reads).
+ */
+export async function optionalAuthenticate(
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    let token: string | undefined;
+
+    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+      token = req.headers.authorization.split(' ')[1];
+    } else if (req.cookies && req.cookies.accessToken) {
+      token = req.cookies.accessToken;
+    }
+
+    if (!token) {
+      return next();
+    }
+
+    await connectDb();
+    const decoded = verifyAccessToken(token);
+    const user = await User.findById(decoded.userId);
+
+    if (user && !user.isBanned && user.accountStatus !== 'DISABLED') {
+      req.user = user;
+    }
+
+    next();
+  } catch {
+    // If token is invalid or expired, proceed without req.user
+    next();
+  }
+}
+
+/**
  * Role-Based Access Control Middleware
  */
 export function authorize(...allowedRoles: UserRole[]) {

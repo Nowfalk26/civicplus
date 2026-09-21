@@ -8,6 +8,7 @@ exports.generateRefreshToken = generateRefreshToken;
 exports.verifyAccessToken = verifyAccessToken;
 exports.verifyRefreshToken = verifyRefreshToken;
 exports.authenticate = authenticate;
+exports.optionalAuthenticate = optionalAuthenticate;
 exports.authorize = authorize;
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const User_1 = require("../models/User");
@@ -96,6 +97,36 @@ async function authenticate(req, res, next) {
             success: false,
             message: 'Session expired. Please log in again.',
         });
+    }
+}
+/**
+ * Optional Authentication Middleware:
+ * If Authorization header or cookie is present and valid, attaches user to req.user.
+ * If not present or expired, proceeds without blocking (useful for public map reads).
+ */
+async function optionalAuthenticate(req, res, next) {
+    try {
+        let token;
+        if (req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+            token = req.headers.authorization.split(' ')[1];
+        }
+        else if (req.cookies && req.cookies.accessToken) {
+            token = req.cookies.accessToken;
+        }
+        if (!token) {
+            return next();
+        }
+        await (0, db_1.connectDb)();
+        const decoded = verifyAccessToken(token);
+        const user = await User_1.User.findById(decoded.userId);
+        if (user && !user.isBanned && user.accountStatus !== 'DISABLED') {
+            req.user = user;
+        }
+        next();
+    }
+    catch {
+        // If token is invalid or expired, proceed without req.user
+        next();
     }
 }
 /**

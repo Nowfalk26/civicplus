@@ -5,11 +5,11 @@ const complaints_1 = require("../controllers/complaints");
 const auth_1 = require("../middleware/auth");
 const upload_1 = require("../middleware/upload");
 const router = (0, express_1.Router)();
-// Read operations - accessible to authenticated users
-router.get('/', auth_1.authenticate, complaints_1.complaintController.getAll);
-router.get('/nearby', auth_1.authenticate, complaints_1.complaintController.getNearby);
+// Read operations - public viewing with optional authentication
+router.get('/', auth_1.optionalAuthenticate, complaints_1.complaintController.getAll);
+router.get('/nearby', auth_1.optionalAuthenticate, complaints_1.complaintController.getNearby);
 router.get('/user/:userId', auth_1.authenticate, complaints_1.complaintController.getByUser);
-router.get('/:id', auth_1.authenticate, complaints_1.complaintController.getById);
+router.get('/:id', auth_1.optionalAuthenticate, complaints_1.complaintController.getById);
 // AI Vision Image Validation endpoint
 router.post('/validate-image', complaints_1.complaintController.validateImage);
 // Create complaint - citizen role, accepts up to 5 photos

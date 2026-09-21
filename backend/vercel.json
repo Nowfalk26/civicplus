@@ -1,6 +1,17 @@
 {
   "version": 2,
   "buildCommand": "npm run build",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Cross-Origin-Opener-Policy",
+          "value": "same-origin-allow-popups"
+        }
+      ]
+    }
+  ],
   "rewrites": [
     { "source": "/api/health", "destination": "/api/health" },
     { "source": "/health", "destination": "/api/health" },

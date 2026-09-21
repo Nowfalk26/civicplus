@@ -21,6 +21,7 @@ const app = (0, express_1.default)();
 // Security headers
 app.use((0, helmet_1.default)({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
+    crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
 }));
 // CORS configuration: Strictly allow frontend origins with full credentials and preflight support
 const allowedOrigins = [

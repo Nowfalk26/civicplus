@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
-import { GoogleLogin } from '@react-oauth/google';
+import { GoogleLogin, GoogleOAuthProvider } from '@react-oauth/google';
 import { api } from '../../lib/api';
 import { useStore } from '../../store/useStore';
 import { GoogleOAuthModal, isGoogleClientIdConfigured, getEffectiveGoogleClientId } from '../../components/auth/GoogleOAuthModal';
@@ -218,18 +218,20 @@ export const CivicLogin: React.FC = () => {
               {isConfigured ? (
                 <div className="flex flex-col items-center gap-1.5 w-full">
                   <div className="w-full flex justify-center">
-                    <GoogleLogin
-                      onSuccess={handleGoogleSuccess}
-                      onError={() => {
-                        toast.error('Google Sign-In failed or was cancelled.');
-                      }}
-                      useOneTap={false}
-                      theme="outline"
-                      size="large"
-                      text="continue_with"
-                      shape="rectangular"
-                      width="360"
-                    />
+                    <GoogleOAuthProvider clientId={currentClientId}>
+                      <GoogleLogin
+                        onSuccess={handleGoogleSuccess}
+                        onError={() => {
+                          toast.error('Google Sign-In failed or was cancelled.');
+                        }}
+                        useOneTap={false}
+                        theme="outline"
+                        size="large"
+                        text="continue_with"
+                        shape="rectangular"
+                        width="360"
+                      />
+                    </GoogleOAuthProvider>
                   </div>
                   <button
                     type="button"

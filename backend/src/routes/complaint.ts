@@ -8,7 +8,7 @@ const router = Router();
 // Read operations - public viewing with optional authentication
 router.get('/', optionalAuthenticate, complaintController.getAll);
 router.get('/nearby', optionalAuthenticate, complaintController.getNearby);
-router.get('/user/:userId', authenticate, complaintController.getByUser);
+router.get('/user/:userId', optionalAuthenticate, complaintController.getByUser);
 router.get('/:id', optionalAuthenticate, complaintController.getById);
 
 // AI Vision Image Validation endpoint

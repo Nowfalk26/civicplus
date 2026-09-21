@@ -8,7 +8,7 @@ const router = (0, express_1.Router)();
 // Read operations - public viewing with optional authentication
 router.get('/', auth_1.optionalAuthenticate, complaints_1.complaintController.getAll);
 router.get('/nearby', auth_1.optionalAuthenticate, complaints_1.complaintController.getNearby);
-router.get('/user/:userId', auth_1.authenticate, complaints_1.complaintController.getByUser);
+router.get('/user/:userId', auth_1.optionalAuthenticate, complaints_1.complaintController.getByUser);
 router.get('/:id', auth_1.optionalAuthenticate, complaints_1.complaintController.getById);
 // AI Vision Image Validation endpoint
 router.post('/validate-image', complaints_1.complaintController.validateImage);

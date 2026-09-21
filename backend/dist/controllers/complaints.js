@@ -542,6 +542,10 @@ exports.complaintController = {
         try {
             await (0, db_1.connectDb)();
             const { userId } = req.params;
+            if (!userId || userId === 'undefined' || userId === 'null') {
+                res.json({ success: true, count: 0, complaints: [] });
+                return;
+            }
             const userComplaints = await Complaint_1.Complaint.find({ reportedById: userId })
                 .sort({ createdAt: -1 })
                 .lean();

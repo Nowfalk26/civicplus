@@ -36,7 +36,7 @@ export type AssignmentStatus =
 export interface IComplaintPhoto {
   id?: string;
   url: string;
-  type: 'BEFORE' | 'AFTER' | 'EVIDENCE' | 'SITE_VISIT' | 'WORK_STARTED' | 'WORK_COMPLETED';
+  type: 'BEFORE' | 'AFTER' | 'EVIDENCE' | 'SITE_VISIT' | 'WORK_STARTED' | 'WORK_IN_PROGRESS' | 'WORK_COMPLETED';
   uploadedAt: Date;
   uploadedBy?: string | null;
   description?: string | null;
@@ -124,7 +124,7 @@ export interface IComplaint extends Document {
 const PhotoSubSchema = new Schema<IComplaintPhoto>(
   {
     url: { type: String, required: true },
-    type: { type: String, enum: ['BEFORE', 'AFTER', 'EVIDENCE', 'SITE_VISIT', 'WORK_STARTED', 'WORK_COMPLETED'], default: 'BEFORE' },
+    type: { type: String, enum: ['BEFORE', 'AFTER', 'EVIDENCE', 'SITE_VISIT', 'WORK_STARTED', 'WORK_IN_PROGRESS', 'WORK_COMPLETED'], default: 'BEFORE' },
     uploadedAt: { type: Date, default: Date.now },
     uploadedBy: { type: String, default: null },
     description: { type: String, default: null },

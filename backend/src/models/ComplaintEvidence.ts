@@ -4,6 +4,7 @@ export type EvidenceType =
   | 'CITIZEN_SUBMISSION'
   | 'SITE_VISIT'
   | 'WORK_STARTED'
+  | 'WORK_IN_PROGRESS'
   | 'WORK_COMPLETED';
 
 export interface IComplaintEvidence extends Document {
@@ -35,7 +36,7 @@ const ComplaintEvidenceSchema = new Schema<IComplaintEvidence>(
     },
     type: {
       type: String,
-      enum: ['CITIZEN_SUBMISSION', 'SITE_VISIT', 'WORK_STARTED', 'WORK_COMPLETED'],
+      enum: ['CITIZEN_SUBMISSION', 'SITE_VISIT', 'WORK_STARTED', 'WORK_IN_PROGRESS', 'WORK_COMPLETED'],
       required: true,
       index: true,
     },

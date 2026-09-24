@@ -11,7 +11,7 @@ import {
 export interface GeoCameraModalProps {
   isOpen: boolean;
   onClose: () => void;
-  stageTitle: 'SITE INSPECTION' | 'WORK STARTED' | 'WORK COMPLETED';
+  stageTitle: 'SITE INSPECTION' | 'WORK STARTED' | 'WORK IN PROGRESS' | 'WORK COMPLETED' | string;
   complaint: {
     id?: string;
     complaintId: string;
@@ -479,7 +479,7 @@ export const GeoCameraModal: React.FC<GeoCameraModalProps> = ({
                   className="px-3.5 py-2 rounded-xl bg-surface-container hover:bg-surface-container-high text-on-surface font-bold text-xs flex items-center gap-1.5 transition-colors"
                 >
                   <span className="material-symbols-outlined text-[15px]">refresh</span>
-                  <span>Retake Photo</span>
+                  <span>Retake</span>
                 </button>
                 <button
                   type="button"
@@ -487,7 +487,7 @@ export const GeoCameraModal: React.FC<GeoCameraModalProps> = ({
                   className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors"
                 >
                   <span className="material-symbols-outlined text-[15px]">check_circle</span>
-                  <span>Confirm & Save Evidence</span>
+                  <span>Use Photo</span>
                 </button>
               </>
             ) : stream ? (

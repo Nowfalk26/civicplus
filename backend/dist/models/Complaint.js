@@ -37,7 +37,7 @@ exports.Complaint = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
 const PhotoSubSchema = new mongoose_1.Schema({
     url: { type: String, required: true },
-    type: { type: String, enum: ['BEFORE', 'AFTER', 'EVIDENCE', 'SITE_VISIT', 'WORK_STARTED', 'WORK_COMPLETED'], default: 'BEFORE' },
+    type: { type: String, enum: ['BEFORE', 'AFTER', 'EVIDENCE', 'SITE_VISIT', 'WORK_STARTED', 'WORK_IN_PROGRESS', 'WORK_COMPLETED'], default: 'BEFORE' },
     uploadedAt: { type: Date, default: Date.now },
     uploadedBy: { type: String, default: null },
     description: { type: String, default: null },

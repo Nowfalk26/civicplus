@@ -30,7 +30,7 @@ function mapStatusToStage(status: string): string {
 function evidenceTypeLabel(type: string): string {
   const labels: Record<string, string> = {
     CITIZEN_SUBMISSION: 'Before', SITE_VISIT: 'Site Visit',
-    WORK_STARTED: 'Work Started', WORK_COMPLETED: 'Completed',
+    WORK_STARTED: 'Work Started', WORK_IN_PROGRESS: 'Work In Progress', WORK_COMPLETED: 'Completed',
   };
   return labels[type] || type;
 }
@@ -104,13 +104,16 @@ export const ComplaintTracking: React.FC = () => {
   };
 
   const findEvidence = (stageKey: string) => {
-    const typeMap: Record<string, string> = {
-      SUBMITTED: 'CITIZEN_SUBMISSION', SITE_VISIT_COMPLETED: 'SITE_VISIT',
-      WORK_STARTED: 'WORK_STARTED', RESOLVED: 'WORK_COMPLETED',
+    const typeMap: Record<string, string[]> = {
+      SUBMITTED: ['CITIZEN_SUBMISSION'],
+      SITE_VISIT_COMPLETED: ['SITE_VISIT'],
+      WORK_STARTED: ['WORK_STARTED', 'WORK_IN_PROGRESS'],
+      WORK_IN_PROGRESS: ['WORK_IN_PROGRESS', 'WORK_STARTED'],
+      RESOLVED: ['WORK_COMPLETED'],
     };
-    const type = typeMap[stageKey];
-    if (!type) return null;
-    return evidence.find((e: any) => e.type === type);
+    const types = typeMap[stageKey];
+    if (!types) return null;
+    return evidence.find((e: any) => types.includes(e.type));
   };
 
   const stageIsCompleted = (stageKey: string) => {

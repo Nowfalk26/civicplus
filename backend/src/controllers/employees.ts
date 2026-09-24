@@ -5,9 +5,13 @@ import { Employee } from '../models/Employee';
 import { User } from '../models/User';
 import { Complaint } from '../models/Complaint';
 import { ReportVerification } from '../models/ReportVerification';
+import { ComplaintEvidence } from '../models/ComplaintEvidence';
+import { ComplaintEvent } from '../models/ComplaintEvent';
 import { getNextAccountNumber, getNextEmployeeNumber } from '../models/Counter';
 import { connectDb } from '../lib/db';
 import { AuthenticatedRequest } from '../middleware/auth';
+import { calculateDistance } from '../utils/calculateDistance';
+import { uploadToCloudinary } from '../middleware/upload';
 
 const createEmployeeSchema = z.object({
   fullName: z.string().trim().min(2, 'Full name is required (at least 2 characters)'),
@@ -394,7 +398,7 @@ export const employeeController = {
     }
   },
 
-  // POST /api/employees/my-reports/:id/verify (Employee Report Verification)
+  // POST /api/employees/my-reports/:id/verify (Employee Report Verification & Progress Sign-off)
   verifyAssignedReport: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
       await connectDb();
@@ -404,12 +408,51 @@ export const employeeController = {
       }
 
       const { id } = req.params;
-      const { verificationResult, verificationNotes, progressStatus, evidenceSummary } = req.body;
+      const {
+        verificationResult,
+        verificationNotes,
+        progressStatus,
+        evidenceSummary,
+        photoUrl,
+        latitude,
+        longitude,
+        capturedAt,
+        watermarkText,
+      } = req.body;
 
       if (!['GENUINE', 'FAKE', 'NEEDS_REVIEW'].includes(verificationResult)) {
         res.status(400).json({
           success: false,
           message: 'Verification result must be GENUINE, FAKE, or NEEDS_REVIEW.',
+        });
+        return;
+      }
+
+      // Check mandatory photo for field work statuses
+      const isProgressWork = progressStatus === 'IN_PROGRESS' || progressStatus === 'WORK_IN_PROGRESS';
+      const isCompletedWork = progressStatus === 'RESOLVED' || progressStatus === 'COMPLETED';
+
+      let finalPhotoUrl = photoUrl && typeof photoUrl === 'string' && photoUrl.trim().length > 0
+        ? photoUrl.trim()
+        : null;
+
+      const file = req.file as Express.Multer.File | undefined;
+      if (file && file.buffer) {
+        finalPhotoUrl = await uploadToCloudinary(file.buffer);
+      }
+
+      if (isProgressWork && !finalPhotoUrl) {
+        res.status(400).json({
+          success: false,
+          message: 'Please capture a work progress photo using the camera.',
+        });
+        return;
+      }
+
+      if (isCompletedWork && !finalPhotoUrl) {
+        res.status(400).json({
+          success: false,
+          message: 'Please capture a completion photo using the camera before closing this complaint.',
         });
         return;
       }
@@ -434,6 +477,20 @@ export const employeeController = {
         return;
       }
 
+      // Proximity / Location calculation
+      const numLat = latitude !== undefined && latitude !== null ? Number(latitude) : null;
+      const numLon = longitude !== undefined && longitude !== null ? Number(longitude) : null;
+      let distKm: number | null = null;
+      let isLocationVerified = true;
+
+      if (numLat !== null && numLon !== null && !isNaN(numLat) && !isNaN(numLon) && complaint.latitude && complaint.longitude) {
+        distKm = Number(calculateDistance(numLat, numLon, complaint.latitude, complaint.longitude).toFixed(3));
+        const geofenceRadius = Number(process.env.GEOFENCE_RADIUS_KM) || 0.5;
+        isLocationVerified = distKm <= geofenceRadius;
+      }
+
+      const captureDate = capturedAt ? new Date(capturedAt) : new Date();
+
       // 1. Update Complaint Verification
       complaint.verificationStatus = verificationResult;
       complaint.verifiedByUserId = req.user.id;
@@ -442,23 +499,83 @@ export const employeeController = {
       complaint.verifiedAt = new Date();
       complaint.verificationNotes = verificationNotes || `Report verified as ${verificationResult}`;
 
-      if (progressStatus && ['IN_PROGRESS', 'RESOLVED'].includes(progressStatus)) {
-        complaint.status = progressStatus;
-        if (progressStatus === 'RESOLVED') {
+      // Handle status update and timers
+      const effectiveStatus = isCompletedWork ? 'RESOLVED' : isProgressWork ? 'IN_PROGRESS' : progressStatus;
+      if (effectiveStatus && ['IN_PROGRESS', 'WORK_IN_PROGRESS', 'RESOLVED', 'ASSIGNED'].includes(effectiveStatus)) {
+        complaint.status = effectiveStatus;
+        if (isProgressWork && !complaint.workStartedAt) {
+          complaint.workStartedAt = new Date();
+          complaint.workStartedBy = employee._id;
+          complaint.workStartedNotes = verificationNotes || 'Work started on site';
+        }
+        if (isCompletedWork) {
+          complaint.completedAt = new Date();
+          complaint.completedBy = employee._id;
+          complaint.completionNotes = verificationNotes || 'Work completed on site';
           complaint.resolvedAt = new Date();
+          if (complaint.workStartedAt) {
+            complaint.workDuration = complaint.completedAt.getTime() - new Date(complaint.workStartedAt).getTime();
+          }
         }
       }
 
+      // 2. Create ComplaintEvidence and append to complaint.photos if photo is present
+      let createdEvidence: any = null;
+      if (finalPhotoUrl) {
+        const evidenceType = isCompletedWork ? 'WORK_COMPLETED' : 'WORK_IN_PROGRESS';
+
+        createdEvidence = await ComplaintEvidence.create({
+          complaintId: complaint._id,
+          type: evidenceType,
+          fileUrl: finalPhotoUrl,
+          uploadedBy: req.user.id,
+          uploadedByName: `${employee.fullName} (${employee.employeeId})`,
+          uploadedAt: new Date(),
+          description: verificationNotes?.trim() || `${evidenceType} evidence`,
+          latitude: numLat,
+          longitude: numLon,
+          capturedAt: captureDate,
+          distanceFromSiteKm: distKm,
+          isLocationVerified,
+          watermarkText: watermarkText || null,
+        });
+
+        complaint.photos.push({
+          url: finalPhotoUrl,
+          type: evidenceType as any,
+          uploadedAt: new Date(),
+          uploadedBy: `${employee.fullName} (${employee.employeeId})`,
+          description: verificationNotes?.trim() || `${evidenceType} evidence`,
+          latitude: numLat,
+          longitude: numLon,
+          capturedAt: captureDate,
+          distanceFromSiteKm: distKm,
+          isLocationVerified,
+        });
+      }
+
+      const locationTag = numLat && numLon
+        ? ` • GPS: ${numLat.toFixed(4)}° N, ${numLon.toFixed(4)}° E (${isLocationVerified ? 'Location Confirmed' : `${Math.round((distKm || 0) * 1000)}m from site`})`
+        : '';
+
+      const timelineStage = isCompletedWork
+        ? 'WORK_COMPLETED'
+        : isProgressWork
+        ? 'WORK_IN_PROGRESS'
+        : `VERIFIED_${verificationResult}`;
+
       complaint.timeline.push({
-        stage: `VERIFIED_${verificationResult}`,
+        stage: timelineStage,
         timestamp: new Date(),
         officerName: `${employee.fullName} (${employee.employeeId})`,
-        notes: verificationNotes || `Field inspection completed: ${verificationResult}`,
+        notes: `${verificationNotes || `Field inspection completed: ${verificationResult}`}${locationTag}`,
+        actorId: req.user.id,
+        evidenceId: createdEvidence?._id?.toString() || undefined,
       });
 
       await complaint.save();
 
-      // 2. Create persistent ReportVerification log
+      // 3. Create persistent ReportVerification log
       await ReportVerification.create({
         complaintId: complaint._id,
         complaintCode: complaint.complaintId,
@@ -471,11 +588,34 @@ export const employeeController = {
         verifiedAt: new Date(),
       });
 
-      console.log(`[REPORT-VERIFIED] Complaint ${complaint.complaintId} verified as ${verificationResult} by ${employee.fullName}`);
+      // 4. Create ComplaintEvent audit trail
+      if (isProgressWork || isCompletedWork) {
+        await ComplaintEvent.create({
+          complaintId: complaint._id,
+          eventType: isCompletedWork ? 'WORK_COMPLETED' : 'WORK_STARTED',
+          actorId: req.user.id,
+          actorRole: 'EMPLOYEE',
+          actorName: `${employee.fullName} (${employee.employeeId})`,
+          timestamp: new Date(),
+          description: `${isCompletedWork ? 'Work completed' : 'Work in progress'} sign-off submitted. ${verificationNotes?.trim() || ''}${locationTag}`,
+          evidenceId: createdEvidence?._id,
+          metadata: {
+            latitude: numLat,
+            longitude: numLon,
+            capturedAt: captureDate.toISOString(),
+            distanceFromSiteKm: distKm,
+            isLocationVerified,
+            verificationResult,
+            progressStatus: complaint.status,
+          },
+        }).catch((e: any) => console.error('Audit event creation error:', e));
+      }
+
+      console.log(`[REPORT-VERIFIED] Complaint ${complaint.complaintId} verified as ${verificationResult} by ${employee.fullName} (Status: ${complaint.status}, Evidence: ${createdEvidence?._id || 'none'})`);
 
       res.json({
         success: true,
-        message: `Report marked as ${verificationResult}. Verification saved permanently in MongoDB.`,
+        message: `Report marked as ${verificationResult}. Verification and work evidence saved permanently.`,
         complaint: complaint.toJSON(),
       });
     } catch (error: any) {

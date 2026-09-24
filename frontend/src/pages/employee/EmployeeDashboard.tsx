@@ -566,169 +566,6 @@ export const EmployeeDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Mandatory Camera Evidence Section when field work status selected */}
-          {progressStatus === 'IN_PROGRESS' && (
-            <div className="p-3.5 rounded-2xl bg-amber-50/80 border-2 border-amber-300 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[18px] text-amber-700">photo_camera</span>
-                  <span className="font-black text-xs text-amber-950 uppercase tracking-wide">
-                    Work Started / Progress Evidence <span className="text-red-600">*</span>
-                  </span>
-                </div>
-                <span className="px-2 py-0.5 rounded-md bg-amber-200/90 text-amber-900 font-bold text-[9px] uppercase tracking-wider">
-                  Mandatory Camera Photo
-                </span>
-              </div>
-
-              {verifyGeoEvidence ? (
-                /* Watermarked Captured Evidence Card */
-                <div className="bg-white p-3 rounded-xl border border-amber-200 space-y-2 shadow-xs">
-                  <div className="relative rounded-lg overflow-hidden aspect-[16/10] bg-black max-h-56">
-                    <img
-                      src={verifyGeoEvidence.photoUrl}
-                      alt="Work in Progress Evidence"
-                      className="w-full h-full object-contain"
-                    />
-                    <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/75 text-emerald-400 text-[10px] font-bold flex items-center gap-1 backdrop-blur-xs">
-                      <span className="material-symbols-outlined text-[13px]">verified</span>
-                      <span>Watermark Burned (Bottom-Left)</span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-[11px]">
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-1.5">
-                        {verifyGeoEvidence.isLocationConfirmed ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300">
-                            <span className="material-symbols-outlined text-[12px]">check_circle</span>
-                            ✓ Location Verified
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[10px] bg-amber-100 text-amber-900 border border-amber-300">
-                            <span className="material-symbols-outlined text-[12px]">warning</span>
-                            ⚠ You appear to be away from the reported complaint location.
-                          </span>
-                        )}
-                      </div>
-                      <p className="font-mono text-on-surface-variant text-[10px]">
-                        GPS: {formatCoordinates(verifyGeoEvidence.latitude, verifyGeoEvidence.longitude)} • Captured at {new Date(verifyGeoEvidence.capturedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setIsVerifyCameraOpen(true)}
-                      className="px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface font-bold text-xs flex items-center justify-center gap-1 shrink-0 transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">refresh</span>
-                      <span>Retake Photo</span>
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* Prompt to open Camera */
-                <div className="text-center py-4 px-3 bg-white rounded-xl border border-dashed border-amber-400 space-y-2">
-                  <p className="font-bold text-xs text-amber-950">A fresh camera photo is required.</p>
-                  <p className="text-[11px] text-amber-800">
-                    Photo is mandatory. Gallery upload is disabled.
-                  </p>
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => setIsVerifyCameraOpen(true)}
-                      className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-sm transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">photo_camera</span>
-                      <span>Capture Camera Photo</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {progressStatus === 'RESOLVED' && (
-            <div className="p-3.5 rounded-2xl bg-emerald-50/80 border-2 border-emerald-300 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[18px] text-emerald-700">photo_camera</span>
-                  <span className="font-black text-xs text-emerald-950 uppercase tracking-wide">
-                    Work Completion Evidence <span className="text-red-600">*</span>
-                  </span>
-                </div>
-                <span className="px-2 py-0.5 rounded-md bg-emerald-200/90 text-emerald-900 font-bold text-[9px] uppercase tracking-wider">
-                  Mandatory Camera Photo
-                </span>
-              </div>
-
-              {verifyGeoEvidence ? (
-                /* Watermarked Captured Evidence Card */
-                <div className="bg-white p-3 rounded-xl border border-emerald-200 space-y-2 shadow-xs">
-                  <div className="relative rounded-lg overflow-hidden aspect-[16/10] bg-black max-h-56">
-                    <img
-                      src={verifyGeoEvidence.photoUrl}
-                      alt="Work Completion Evidence"
-                      className="w-full h-full object-contain"
-                    />
-                    <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/75 text-emerald-400 text-[10px] font-bold flex items-center gap-1 backdrop-blur-xs">
-                      <span className="material-symbols-outlined text-[13px]">verified</span>
-                      <span>Watermark Burned (Bottom-Left)</span>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-[11px]">
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-1.5">
-                        {verifyGeoEvidence.isLocationConfirmed ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300">
-                            <span className="material-symbols-outlined text-[12px]">check_circle</span>
-                            ✓ Location Verified
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[10px] bg-amber-100 text-amber-900 border border-amber-300">
-                            <span className="material-symbols-outlined text-[12px]">warning</span>
-                            ⚠ You appear to be away from the reported complaint location.
-                          </span>
-                        )}
-                      </div>
-                      <p className="font-mono text-on-surface-variant text-[10px]">
-                        GPS: {formatCoordinates(verifyGeoEvidence.latitude, verifyGeoEvidence.longitude)} • Captured at {new Date(verifyGeoEvidence.capturedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      </p>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => setIsVerifyCameraOpen(true)}
-                      className="px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface font-bold text-xs flex items-center justify-center gap-1 shrink-0 transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-[14px]">refresh</span>
-                      <span>Retake Photo</span>
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                /* Prompt to open Camera */
-                <div className="text-center py-4 px-3 bg-white rounded-xl border border-dashed border-emerald-400 space-y-2">
-                  <p className="font-bold text-xs text-emerald-950">A fresh completion photo is required.</p>
-                  <p className="text-[11px] text-emerald-800">
-                    Photo is mandatory. Gallery upload is disabled.
-                  </p>
-                  <div>
-                    <button
-                      type="button"
-                      onClick={() => setIsVerifyCameraOpen(true)}
-                      className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-sm transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-[16px]">photo_camera</span>
-                      <span>Capture Camera Photo</span>
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
           <div>
             <label className="font-bold text-on-surface block mb-1">
               Inspection Notes / Resolution Details
@@ -741,6 +578,90 @@ export const EmployeeDashboard: React.FC = () => {
               rows={3}
               className="w-full p-2.5 rounded-xl border border-outline-variant outline-none focus:border-primary bg-white"
             />
+          </div>
+
+          {/* Photo Capture Section - Below Inspection Notes */}
+          <div className="p-3.5 rounded-2xl bg-surface-container-low border border-surface-container space-y-2.5">
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-on-surface flex items-center gap-1.5 text-xs">
+                <span className="material-symbols-outlined text-[17px] text-primary">photo_camera</span>
+                <span>Field Evidence Photo {['IN_PROGRESS', 'RESOLVED'].includes(progressStatus) && <span className="text-red-500">*</span>}</span>
+              </label>
+              <span className="text-[10px] text-on-surface-variant font-medium">
+                Direct camera capture only • Gallery upload disabled
+              </span>
+            </div>
+
+            {verifyGeoEvidence ? (
+              /* Watermarked Captured Evidence Card */
+              <div className="bg-white p-3 rounded-xl border border-surface-container space-y-2 shadow-xs">
+                <div className="relative rounded-lg overflow-hidden aspect-[16/10] bg-black max-h-56">
+                  <img
+                    src={verifyGeoEvidence.photoUrl}
+                    alt="Captured Field Evidence"
+                    className="w-full h-full object-contain"
+                  />
+                  <div className="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-black/75 text-emerald-400 text-[10px] font-bold flex items-center gap-1 backdrop-blur-xs">
+                    <span className="material-symbols-outlined text-[13px]">verified</span>
+                    <span>Watermark Burned (Bottom-Left)</span>
+                  </div>
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1 text-[11px]">
+                  <div className="space-y-0.5">
+                    <div className="flex items-center gap-1.5">
+                      {verifyGeoEvidence.isLocationConfirmed ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300">
+                          <span className="material-symbols-outlined text-[12px]">check_circle</span>
+                          ✓ Location Verified
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full font-bold text-[10px] bg-amber-100 text-amber-900 border border-amber-300">
+                          <span className="material-symbols-outlined text-[12px]">warning</span>
+                          ⚠ Away from reported location
+                        </span>
+                      )}
+                    </div>
+                    <p className="font-mono text-on-surface-variant text-[10px]">
+                      GPS: {formatCoordinates(verifyGeoEvidence.latitude, verifyGeoEvidence.longitude)} • Captured at {new Date(verifyGeoEvidence.capturedAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </p>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setIsVerifyCameraOpen(true)}
+                      className="px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-on-surface font-bold text-xs flex items-center justify-center gap-1 shrink-0 transition-colors"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">refresh</span>
+                      <span>Retake</span>
+                    </button>
+                    <span className="px-2.5 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold text-[11px] border border-emerald-200 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-[13px]">check</span>
+                      <span>Photo Ready</span>
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              /* Prompt to open Camera */
+              <div className="text-center py-4 px-3 bg-white rounded-xl border-2 border-dashed border-primary/30 hover:border-primary/50 transition-colors space-y-2">
+                <p className="font-bold text-xs text-on-surface">Live Device Camera Required</p>
+                <p className="text-[11px] text-on-surface-variant">
+                  Capture a verified work evidence photo directly using the device camera.
+                </p>
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => setIsVerifyCameraOpen(true)}
+                    className="px-4 py-2 rounded-xl bg-primary hover:bg-primary-hover text-white font-bold text-xs inline-flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">photo_camera</span>
+                    <span>Capture Photo</span>
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="border-t border-surface-container pt-3 flex justify-end gap-2">

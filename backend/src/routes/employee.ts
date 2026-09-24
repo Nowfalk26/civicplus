@@ -5,9 +5,9 @@ import { uploadMiddleware } from '../middleware/upload';
 
 const router = Router();
 
-// Employee Self-Service Desk
-router.get('/my-reports', authenticate, authorize('EMPLOYEE'), employeeController.getMyReports);
-router.post('/my-reports/:id/verify', authenticate, authorize('EMPLOYEE'), uploadMiddleware.single('photo'), employeeController.verifyAssignedReport);
+// Employee Self-Service Desk (also accessible by ADMIN / OFFICER for oversight and preview)
+router.get('/my-reports', authenticate, authorize('EMPLOYEE', 'ADMIN', 'OFFICER'), employeeController.getMyReports);
+router.post('/my-reports/:id/verify', authenticate, authorize('EMPLOYEE', 'ADMIN', 'OFFICER'), uploadMiddleware.single('photo'), employeeController.verifyAssignedReport);
 
 // Officer & Controller Management
 router.get('/', authenticate, authorize('OFFICER', 'ADMIN'), employeeController.getAll);

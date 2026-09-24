@@ -348,23 +348,38 @@ export const employeeController = {
     }
   },
 
-  // GET /api/employees/my-reports (Strict Backend Partitioning: Employee only sees their own assigned reports)
+  // GET /api/employees/my-reports (Strict Backend Partitioning: Employee only sees their own assigned reports, with Admin/Officer oversight)
   getMyReports: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
       await connectDb();
-      if (!req.user || req.user.role !== 'EMPLOYEE') {
-        res.status(403).json({ success: false, message: 'Access strictly for authenticated field employees.' });
+      if (!req.user || !['EMPLOYEE', 'ADMIN', 'OFFICER'].includes(req.user.role)) {
+        res.status(403).json({ success: false, message: 'Access strictly for authenticated field employees or administrators.' });
         return;
       }
 
-      const employee = await Employee.findOne({ userId: req.user.id });
-      if (!employee) {
+      const isAdminOrOfficer = req.user.role === 'ADMIN' || req.user.role === 'OFFICER';
+      let employee = await Employee.findOne({ userId: req.user.id });
+
+      if (!employee && isAdminOrOfficer) {
+        // Fallback for Admin preview: link to first active employee
+        employee = await Employee.findOne().sort({ createdAt: -1 });
+      }
+
+      if (!employee && !isAdminOrOfficer) {
         res.status(404).json({ success: false, message: 'Employee profile not found.' });
         return;
       }
 
       const { status, verificationStatus } = req.query;
-      const filter: any = { assignedEmployeeId: employee._id };
+      const filter: any = {};
+      if (employee && !isAdminOrOfficer) {
+        filter.assignedEmployeeId = employee._id;
+      } else if (employee && isAdminOrOfficer) {
+        const hasAssigned = await Complaint.countDocuments({ assignedEmployeeId: employee._id });
+        if (hasAssigned > 0) {
+          filter.assignedEmployeeId = employee._id;
+        }
+      }
 
       if (status && status !== 'ALL') {
         filter.status = status;
@@ -385,11 +400,16 @@ export const employeeController = {
           ...r,
           id: r._id.toString(),
         })),
-        employee: {
+        employee: employee ? {
           id: employee._id.toString(),
           employeeId: employee.employeeId,
           fullName: employee.fullName,
           assignedZone: employee.assignedZone,
+        } : {
+          id: req.user.id,
+          employeeId: 'ADMIN-TN',
+          fullName: req.user.name || 'TN Control Administrator',
+          assignedZone: 'Tamil Nadu Central',
         },
       });
     } catch (error: any) {
@@ -402,8 +422,8 @@ export const employeeController = {
   verifyAssignedReport: async (req: AuthenticatedRequest, res: Response): Promise<void> => {
     try {
       await connectDb();
-      if (!req.user || req.user.role !== 'EMPLOYEE') {
-        res.status(403).json({ success: false, message: 'Only assigned employees can verify this report.' });
+      if (!req.user || !['EMPLOYEE', 'ADMIN', 'OFFICER'].includes(req.user.role)) {
+        res.status(403).json({ success: false, message: 'Only assigned employees or administrators can verify this report.' });
         return;
       }
 
@@ -457,17 +477,24 @@ export const employeeController = {
         return;
       }
 
-      const employee = await Employee.findOne({ userId: req.user.id });
-      if (!employee) {
+      const isAdminOrOfficer = req.user.role === 'ADMIN' || req.user.role === 'OFFICER';
+      let employee = await Employee.findOne({ userId: req.user.id });
+      if (!employee && isAdminOrOfficer) {
+        employee = await Employee.findOne().sort({ createdAt: -1 });
+      }
+
+      if (!employee && !isAdminOrOfficer) {
         res.status(404).json({ success: false, message: 'Employee profile not found.' });
         return;
       }
 
-      // Security check: Employee can only verify complaints assigned to THEM
-      const complaint = await Complaint.findOne({
-        _id: id,
-        assignedEmployeeId: employee._id,
-      });
+      // Security check: Employee can only verify complaints assigned to THEM (Admin/Officer can verify for oversight)
+      const complaintQuery: any = { _id: id };
+      if (!isAdminOrOfficer && employee) {
+        complaintQuery.assignedEmployeeId = employee._id;
+      }
+
+      const complaint = await Complaint.findOne(complaintQuery);
 
       if (!complaint) {
         res.status(403).json({
@@ -490,12 +517,13 @@ export const employeeController = {
       }
 
       const captureDate = capturedAt ? new Date(capturedAt) : new Date();
+      const staffName = employee ? `${employee.fullName} (${employee.employeeId})` : `${req.user.name || 'Administrator'} (HQ)`;
 
       // 1. Update Complaint Verification
       complaint.verificationStatus = verificationResult;
       complaint.verifiedByUserId = req.user.id;
-      complaint.verifiedByEmployeeId = employee._id;
-      complaint.verifiedByName = `${employee.fullName} (${employee.employeeId})`;
+      complaint.verifiedByEmployeeId = employee?._id;
+      complaint.verifiedByName = staffName;
       complaint.verifiedAt = new Date();
       complaint.verificationNotes = verificationNotes || `Report verified as ${verificationResult}`;
 
@@ -505,12 +533,12 @@ export const employeeController = {
         complaint.status = effectiveStatus;
         if (isProgressWork && !complaint.workStartedAt) {
           complaint.workStartedAt = new Date();
-          complaint.workStartedBy = employee._id;
+          complaint.workStartedBy = employee?._id;
           complaint.workStartedNotes = verificationNotes || 'Work started on site';
         }
         if (isCompletedWork) {
           complaint.completedAt = new Date();
-          complaint.completedBy = employee._id;
+          complaint.completedBy = employee?._id;
           complaint.completionNotes = verificationNotes || 'Work completed on site';
           complaint.resolvedAt = new Date();
           if (complaint.workStartedAt) {
@@ -529,7 +557,7 @@ export const employeeController = {
           type: evidenceType,
           fileUrl: finalPhotoUrl,
           uploadedBy: req.user.id,
-          uploadedByName: `${employee.fullName} (${employee.employeeId})`,
+          uploadedByName: staffName,
           uploadedAt: new Date(),
           description: verificationNotes?.trim() || `${evidenceType} evidence`,
           latitude: numLat,
@@ -544,7 +572,7 @@ export const employeeController = {
           url: finalPhotoUrl,
           type: evidenceType as any,
           uploadedAt: new Date(),
-          uploadedBy: `${employee.fullName} (${employee.employeeId})`,
+          uploadedBy: staffName,
           description: verificationNotes?.trim() || `${evidenceType} evidence`,
           latitude: numLat,
           longitude: numLon,
@@ -567,7 +595,7 @@ export const employeeController = {
       complaint.timeline.push({
         stage: timelineStage,
         timestamp: new Date(),
-        officerName: `${employee.fullName} (${employee.employeeId})`,
+        officerName: staffName,
         notes: `${verificationNotes || `Field inspection completed: ${verificationResult}`}${locationTag}`,
         actorId: req.user.id,
         evidenceId: createdEvidence?._id?.toString() || undefined,
@@ -580,8 +608,8 @@ export const employeeController = {
         complaintId: complaint._id,
         complaintCode: complaint.complaintId,
         verifiedByUserId: req.user.id,
-        verifiedByEmployeeId: employee._id,
-        verifiedByName: `${employee.fullName} (${employee.employeeId})`,
+        verifiedByEmployeeId: employee?._id,
+        verifiedByName: staffName,
         verificationResult,
         verificationNotes: verificationNotes || `Report marked ${verificationResult}`,
         evidenceSummary: evidenceSummary || null,
@@ -594,8 +622,8 @@ export const employeeController = {
           complaintId: complaint._id,
           eventType: isCompletedWork ? 'WORK_COMPLETED' : 'WORK_STARTED',
           actorId: req.user.id,
-          actorRole: 'EMPLOYEE',
-          actorName: `${employee.fullName} (${employee.employeeId})`,
+          actorRole: req.user.role === 'ADMIN' ? 'ADMIN' : 'EMPLOYEE',
+          actorName: staffName,
           timestamp: new Date(),
           description: `${isCompletedWork ? 'Work completed' : 'Work in progress'} sign-off submitted. ${verificationNotes?.trim() || ''}${locationTag}`,
           evidenceId: createdEvidence?._id,
@@ -611,7 +639,7 @@ export const employeeController = {
         }).catch((e: any) => console.error('Audit event creation error:', e));
       }
 
-      console.log(`[REPORT-VERIFIED] Complaint ${complaint.complaintId} verified as ${verificationResult} by ${employee.fullName} (Status: ${complaint.status}, Evidence: ${createdEvidence?._id || 'none'})`);
+      console.log(`[REPORT-VERIFIED] Complaint ${complaint.complaintId} verified as ${verificationResult} by ${staffName} (Status: ${complaint.status}, Evidence: ${createdEvidence?._id || 'none'})`);
 
       res.json({
         success: true,

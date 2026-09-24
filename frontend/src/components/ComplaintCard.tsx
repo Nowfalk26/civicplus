@@ -78,13 +78,22 @@ export const ComplaintCard: React.FC<ComplaintCardProps> = ({
       </div>
 
       {/* Action CTA */}
-      <Link
-        to={`${linkPrefix}/${complaint.id}`}
-        className="mt-4 w-full py-2 px-3 rounded-xl bg-surface-container-low hover:bg-primary hover:text-white text-xs font-bold text-on-surface transition-all flex items-center justify-center gap-1 text-center"
-      >
-        <span>{language === 'en' ? 'Track & View Details' : 'விவரங்களை காண்க'}</span>
-        <span className="material-symbols-outlined text-[16px]">arrow_forward</span>
-      </Link>
+      <div className="mt-4 flex items-center gap-2">
+        <Link
+          to={`${linkPrefix}/${complaint.id}`}
+          className="flex-1 py-2 px-3 rounded-xl bg-surface-container-low hover:bg-surface-container text-xs font-bold text-on-surface transition-all flex items-center justify-center gap-1 text-center"
+        >
+          <span>{language === 'en' ? 'View Details' : 'விவரங்கள்'}</span>
+          <span className="material-symbols-outlined text-[15px]">info</span>
+        </Link>
+        <Link
+          to={`${linkPrefix}/${complaint.id}/track`}
+          className="flex-1 py-2 px-3 rounded-xl bg-primary hover:bg-primary/90 text-white text-xs font-bold transition-all flex items-center justify-center gap-1 text-center shadow-xs"
+        >
+          <span className="material-symbols-outlined text-[15px]">timeline</span>
+          <span>{language === 'en' ? 'Track Progress' : 'முன்னேற்றம்'}</span>
+        </Link>
+      </div>
     </div>
   );
 };

@@ -19,6 +19,12 @@ export const EmployeeDashboard: React.FC = () => {
   const [evidenceSummary, setEvidenceSummary] = useState<string>('');
   const [submitting, setSubmitting] = useState<boolean>(false);
 
+  // Work Tracking Action states
+  const [workAction, setWorkAction] = useState<string | null>(null);
+  const [actionNotes, setActionNotes] = useState('');
+  const [actionPhoto, setActionPhoto] = useState<string | null>(null);
+  const [actionSubmitting, setActionSubmitting] = useState(false);
+
   useEffect(() => {
     fetchMyReports();
   }, [statusFilter]);
@@ -108,6 +114,57 @@ export const EmployeeDashboard: React.FC = () => {
     }
   };
 
+  const handlePhotoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => setActionPhoto(reader.result as string);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const clearWorkAction = () => {
+    setWorkAction(null);
+    setActionNotes('');
+    setActionPhoto(null);
+  };
+
+  const handleWorkAction = async (reportId: string, action: string) => {
+    setActionSubmitting(true);
+    try {
+      let endpoint = '';
+      let payload: any = {};
+      switch (action) {
+        case 'acknowledge':
+          endpoint = `/complaints/${reportId}/acknowledge`;
+          break;
+        case 'site-visit':
+          endpoint = `/complaints/${reportId}/site-visit`;
+          payload = { visitNotes: actionNotes, photoUrl: actionPhoto };
+          break;
+        case 'start-work':
+          endpoint = `/complaints/${reportId}/start-work`;
+          payload = { description: actionNotes, photoUrl: actionPhoto };
+          break;
+        case 'complete-work':
+          endpoint = `/complaints/${reportId}/complete-work`;
+          payload = { description: actionNotes, photoUrl: actionPhoto };
+          break;
+      }
+      const res = await api.post(endpoint, payload);
+      if (res.data?.success) {
+        toast.success(res.data.message || `Action '${action}' completed!`);
+        clearWorkAction();
+        setSelectedReport(null);
+        fetchMyReports();
+      }
+    } catch (err: any) {
+      toast.error(err.response?.data?.message || `Action '${action}' failed.`);
+    } finally {
+      setActionSubmitting(false);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
       {/* Header with Employee ID and Zone */}
@@ -180,7 +237,7 @@ export const EmployeeDashboard: React.FC = () => {
 
       {/* Filter Tabs */}
       <div className="flex flex-wrap items-center gap-2 border-b border-surface-container pb-3 text-xs">
-        {['ALL', 'ASSIGNED', 'IN_PROGRESS', 'RESOLVED'].map((tab) => (
+        {['ALL', 'ASSIGNED', 'VIEWED', 'SITE_VISIT_COMPLETED', 'WORK_STARTED', 'IN_PROGRESS', 'RESOLVED'].map((tab) => (
           <button
             key={tab}
             type="button"
@@ -279,14 +336,60 @@ export const EmployeeDashboard: React.FC = () => {
 
                     {/* Actions */}
                     <td className="p-3.5 text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenVerifyModal(r)}
-                        className="px-3 py-1.5 rounded-xl bg-primary hover:bg-primary-hover text-white font-bold text-xs transition-colors shadow-xs flex items-center gap-1 ml-auto"
-                      >
-                        <span className="material-symbols-outlined text-[15px]">fact_check</span>
-                        <span>Inspect / Verify</span>
-                      </button>
+                      <div className="flex items-center gap-1.5 justify-end flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenVerifyModal(r)}
+                          className="px-2.5 py-1.5 rounded-xl bg-white border border-outline-variant hover:bg-surface-container-low font-bold text-[10px] flex items-center gap-1 transition-colors"
+                        >
+                          <span className="material-symbols-outlined text-[13px] text-primary">fact_check</span>
+                          Verify
+                        </button>
+
+                        {r.status === 'ASSIGNED' && !r.viewedAt && (
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedReport(r); setWorkAction('acknowledge'); }}
+                            className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-[13px]">visibility</span>
+                            Acknowledge
+                          </button>
+                        )}
+
+                        {['ASSIGNED', 'VIEWED'].includes(r.status) && !r.siteVisitAt && (
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedReport(r); setWorkAction('site-visit'); }}
+                            className="px-2.5 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-[13px]">location_on</span>
+                            Site Visit
+                          </button>
+                        )}
+
+                        {['ASSIGNED', 'VIEWED', 'SITE_VISIT_COMPLETED'].includes(r.status) && !r.workStartedAt && (
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedReport(r); setWorkAction('start-work'); }}
+                            className="px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-[13px]">construction</span>
+                            Start Work
+                          </button>
+                        )}
+
+                        {['WORK_STARTED', 'WORK_IN_PROGRESS', 'IN_PROGRESS'].includes(r.status) && r.workStartedAt && !r.completedAt && (
+                          <button
+                            type="button"
+                            onClick={() => { setSelectedReport(r); setWorkAction('complete-work'); }}
+                            className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors"
+                          >
+                            <span className="material-symbols-outlined text-[13px]">check_circle</span>
+                            Complete
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -389,6 +492,93 @@ export const EmployeeDashboard: React.FC = () => {
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* Work Action Modal */}
+      <Modal
+        isOpen={Boolean(selectedReport && workAction)}
+        onClose={clearWorkAction}
+        title={workAction === 'acknowledge' ? 'Acknowledge Complaint' :
+               workAction === 'site-visit' ? 'Complete Site Visit' :
+               workAction === 'start-work' ? 'Start Work' :
+               workAction === 'complete-work' ? 'Complete Work' : ''}
+      >
+        <div className="space-y-4 text-xs">
+          <div className="p-3.5 rounded-xl bg-surface-container-low space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="font-bold text-primary font-mono">{selectedReport?.complaintId}</span>
+              <CategoryBadge category={selectedReport?.category} />
+            </div>
+            <p className="text-on-surface">{selectedReport?.description}</p>
+          </div>
+
+          {workAction === 'acknowledge' ? (
+            <div className="p-4 rounded-xl bg-indigo-50 border border-indigo-200 text-center space-y-2">
+              <span className="material-symbols-outlined text-[36px] text-indigo-600">visibility</span>
+              <p className="text-sm font-bold text-indigo-800">Acknowledge this complaint?</p>
+              <p className="text-xs text-indigo-600">This will record that you have viewed and acknowledged the complaint.</p>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="font-bold text-on-surface block mb-1">
+                  {workAction === 'site-visit' ? 'Inspection Notes' :
+                   workAction === 'start-work' ? 'Work Description' :
+                   'Completion Details'} *
+                </label>
+                <textarea
+                  required
+                  value={actionNotes}
+                  onChange={(e) => setActionNotes(e.target.value)}
+                  placeholder={workAction === 'site-visit' ? 'Describe the site condition and observations...' :
+                               workAction === 'start-work' ? 'Describe the work being initiated...' :
+                               'Describe the work completed and final state...'}
+                  rows={3}
+                  className="w-full p-2.5 rounded-xl border border-outline-variant outline-none focus:border-primary bg-white"
+                />
+              </div>
+              <div>
+                <label className="font-bold text-on-surface block mb-1">
+                  {workAction === 'site-visit' ? 'Site Visit Photo' :
+                   workAction === 'start-work' ? 'Work Start Photo' :
+                   'Completion Photo'} *
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  onChange={handlePhotoChange}
+                  className="w-full text-xs file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary file:text-white file:font-bold file:cursor-pointer"
+                />
+                {actionPhoto && (
+                  <img src={actionPhoto} alt="Preview" className="mt-2 w-full h-32 object-cover rounded-xl border border-surface-container" />
+                )}
+              </div>
+            </>
+          )}
+
+          <div className="border-t border-surface-container pt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={clearWorkAction}
+              className="px-4 py-2 rounded-xl border border-outline-variant font-bold text-on-surface-variant hover:bg-surface-container"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => selectedReport && handleWorkAction(selectedReport.id, workAction!)}
+              disabled={actionSubmitting || (workAction !== 'acknowledge' && (!actionNotes.trim() || !actionPhoto))}
+              className="px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold disabled:opacity-50"
+            >
+              {actionSubmitting ? 'Processing...' :
+               workAction === 'acknowledge' ? 'Confirm Acknowledgement' :
+               workAction === 'site-visit' ? 'Submit Site Visit' :
+               workAction === 'start-work' ? 'Start Work' :
+               'Complete Work'}
+            </button>
+          </div>
+        </div>
       </Modal>
     </div>
   );

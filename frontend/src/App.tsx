@@ -25,6 +25,7 @@ import { RouteReports } from './pages/citizen/RouteReports';
 import { ReportProblem } from './pages/citizen/ReportProblem';
 import { MyComplaints } from './pages/citizen/MyComplaints';
 import { ComplaintDetail } from './pages/citizen/ComplaintDetail';
+import { ComplaintTracking } from './pages/citizen/ComplaintTracking';
 import { CitizenProfile } from './pages/citizen/CitizenProfile';
 
 // Officer Portal Pages
@@ -51,11 +52,26 @@ import { AdminProfileRequests } from './pages/admin/AdminProfileRequests';
 import { StartupSplash } from './components/ui/StartupSplash';
 import { BackendStatusBadge } from './components/ui/BackendStatusBadge';
 import { useStore } from './store/useStore';
+import { GoogleOAuthProvider } from '@react-oauth/google';
+import { getEffectiveGoogleClientId } from './components/auth/GoogleOAuthModal';
 
 const queryClient = new QueryClient();
 
 export const App: React.FC = () => {
   const { language } = useStore();
+  const [googleClientId, setGoogleClientId] = React.useState(getEffectiveGoogleClientId);
+
+  React.useEffect(() => {
+    const handleUpdate = () => {
+      setGoogleClientId(getEffectiveGoogleClientId());
+    };
+    window.addEventListener('civics_google_client_id_changed', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('civics_google_client_id_changed', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
 
   React.useEffect(() => {
     document.documentElement.lang = language;
@@ -69,7 +85,8 @@ export const App: React.FC = () => {
   }, [language]);
 
   return (
-    <QueryClientProvider client={queryClient}>
+    <GoogleOAuthProvider clientId={googleClientId}>
+      <QueryClientProvider client={queryClient}>
       <StartupSplash />
       <BrowserRouter>
         <BackendStatusBadge />
@@ -179,6 +196,14 @@ export const App: React.FC = () => {
               element={
                 <ProtectedRoute allowedRoles={['CITIZEN', 'OFFICER', 'ADMIN']}>
                   <ComplaintDetail />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/citizen/complaints/:id/track"
+              element={
+                <ProtectedRoute allowedRoles={['CITIZEN', 'OFFICER', 'ADMIN', 'EMPLOYEE']}>
+                  <ComplaintTracking />
                 </ProtectedRoute>
               }
             />
@@ -324,6 +349,7 @@ export const App: React.FC = () => {
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
+    </GoogleOAuthProvider>
   );
 };
 

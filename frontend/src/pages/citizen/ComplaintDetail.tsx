@@ -105,8 +105,16 @@ export const ComplaintDetail: React.FC = () => {
           </div>
         </div>
 
-        {/* Action Buttons: Escalate & WhatsApp Share */}
+        {/* Action Buttons: Track, Share & Escalate */}
         <div className="flex items-center gap-2">
+          <Link
+            to={`/citizen/complaints/${complaint._id || complaint.id}/track`}
+            className="px-3.5 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-all"
+          >
+            <span className="material-symbols-outlined text-[16px]">timeline</span>
+            <span>Track Progress</span>
+          </Link>
+
           <a
             href={`https://api.whatsapp.com/send?text=${shareText}`}
             target="_blank"

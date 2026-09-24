@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { complaintController } from '../controllers/complaints';
+import { workTrackingController } from '../controllers/workTracking';
 import { authenticate, optionalAuthenticate, authorize } from '../middleware/auth';
 import { uploadMiddleware } from '../middleware/upload';
 
@@ -62,4 +63,64 @@ router.post(
   complaintController.verifyReport
 );
 
+// ── Work Tracking endpoints ──────────────────────────────────────────
+
+// Citizen / Employee / Officer: comprehensive tracking data
+router.get(
+  '/:id/tracking',
+  authenticate,
+  workTrackingController.getComplaintTracking
+);
+
+// Officer / Admin: full audit event trail
+router.get(
+  '/:id/events',
+  authenticate,
+  authorize('OFFICER', 'ADMIN'),
+  workTrackingController.getComplaintEvents
+);
+
+// Authenticated users: evidence photos
+router.get(
+  '/:id/evidence',
+  authenticate,
+  workTrackingController.getComplaintEvidence
+);
+
+// Employee: acknowledge / view complaint
+router.post(
+  '/:id/acknowledge',
+  authenticate,
+  authorize('EMPLOYEE'),
+  workTrackingController.acknowledgeComplaint
+);
+
+// Employee: record site visit with photo
+router.post(
+  '/:id/site-visit',
+  authenticate,
+  authorize('EMPLOYEE'),
+  uploadMiddleware.single('photo'),
+  workTrackingController.completeSiteVisit
+);
+
+// Employee: start work with photo
+router.post(
+  '/:id/start-work',
+  authenticate,
+  authorize('EMPLOYEE'),
+  uploadMiddleware.single('photo'),
+  workTrackingController.startWork
+);
+
+// Employee: complete work with photo
+router.post(
+  '/:id/complete-work',
+  authenticate,
+  authorize('EMPLOYEE'),
+  uploadMiddleware.single('photo'),
+  workTrackingController.completeWork
+);
+
 export default router;
+

@@ -37,14 +37,18 @@ exports.Complaint = void 0;
 const mongoose_1 = __importStar(require("mongoose"));
 const PhotoSubSchema = new mongoose_1.Schema({
     url: { type: String, required: true },
-    type: { type: String, enum: ['BEFORE', 'AFTER', 'EVIDENCE'], default: 'BEFORE' },
+    type: { type: String, enum: ['BEFORE', 'AFTER', 'EVIDENCE', 'SITE_VISIT', 'WORK_STARTED', 'WORK_COMPLETED'], default: 'BEFORE' },
     uploadedAt: { type: Date, default: Date.now },
+    uploadedBy: { type: String, default: null },
+    description: { type: String, default: null },
 }, { _id: true });
 const TimelineSubSchema = new mongoose_1.Schema({
     stage: { type: String, required: true },
     timestamp: { type: Date, default: Date.now },
     officerName: { type: String, default: null },
     notes: { type: String, default: null },
+    actorId: { type: String, default: null },
+    evidenceId: { type: String, default: null },
 }, { _id: true });
 const FraudFlagSubSchema = new mongoose_1.Schema({
     reason: { type: String, required: true },
@@ -111,7 +115,7 @@ const ComplaintSchema = new mongoose_1.Schema({
     },
     status: {
         type: String,
-        enum: ['SUBMITTED', 'ACCEPTED', 'ASSIGNED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'],
+        enum: ['SUBMITTED', 'ACCEPTED', 'ASSIGNED', 'VIEWED', 'SITE_VISIT_COMPLETED', 'WORK_STARTED', 'WORK_IN_PROGRESS', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'],
         default: 'SUBMITTED',
         index: true,
     },
@@ -185,6 +189,63 @@ const ComplaintSchema = new mongoose_1.Schema({
     },
     resolvedAt: {
         type: Date,
+        default: null,
+    },
+    // Work Tracking
+    dueDate: {
+        type: Date,
+        default: null,
+    },
+    viewedAt: {
+        type: Date,
+        default: null,
+    },
+    viewedBy: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: 'Employee',
+        default: null,
+    },
+    siteVisitAt: {
+        type: Date,
+        default: null,
+    },
+    siteVisitBy: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: 'Employee',
+        default: null,
+    },
+    siteVisitNotes: {
+        type: String,
+        default: null,
+    },
+    workStartedAt: {
+        type: Date,
+        default: null,
+    },
+    workStartedBy: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: 'Employee',
+        default: null,
+    },
+    workStartedNotes: {
+        type: String,
+        default: null,
+    },
+    completedAt: {
+        type: Date,
+        default: null,
+    },
+    completedBy: {
+        type: mongoose_1.Schema.Types.ObjectId,
+        ref: 'Employee',
+        default: null,
+    },
+    completionNotes: {
+        type: String,
+        default: null,
+    },
+    workDuration: {
+        type: Number,
         default: null,
     },
     photos: [PhotoSubSchema],

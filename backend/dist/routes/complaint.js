@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
 const complaints_1 = require("../controllers/complaints");
+const workTracking_1 = require("../controllers/workTracking");
 const auth_1 = require("../middleware/auth");
 const upload_1 = require("../middleware/upload");
 const router = (0, express_1.Router)();
@@ -23,4 +24,19 @@ router.post('/:id/assign-employee', auth_1.authenticate, (0, auth_1.authorize)('
 router.get('/:id/assignment-history', auth_1.authenticate, (0, auth_1.authorize)('OFFICER', 'ADMIN'), complaints_1.complaintController.getAssignmentHistory);
 // Officer Report Verification Desk
 router.post('/:id/verify', auth_1.authenticate, (0, auth_1.authorize)('OFFICER', 'ADMIN'), complaints_1.complaintController.verifyReport);
+// ── Work Tracking endpoints ──────────────────────────────────────────
+// Citizen / Employee / Officer: comprehensive tracking data
+router.get('/:id/tracking', auth_1.authenticate, workTracking_1.workTrackingController.getComplaintTracking);
+// Officer / Admin: full audit event trail
+router.get('/:id/events', auth_1.authenticate, (0, auth_1.authorize)('OFFICER', 'ADMIN'), workTracking_1.workTrackingController.getComplaintEvents);
+// Authenticated users: evidence photos
+router.get('/:id/evidence', auth_1.authenticate, workTracking_1.workTrackingController.getComplaintEvidence);
+// Employee: acknowledge / view complaint
+router.post('/:id/acknowledge', auth_1.authenticate, (0, auth_1.authorize)('EMPLOYEE'), workTracking_1.workTrackingController.acknowledgeComplaint);
+// Employee: record site visit with photo
+router.post('/:id/site-visit', auth_1.authenticate, (0, auth_1.authorize)('EMPLOYEE'), upload_1.uploadMiddleware.single('photo'), workTracking_1.workTrackingController.completeSiteVisit);
+// Employee: start work with photo
+router.post('/:id/start-work', auth_1.authenticate, (0, auth_1.authorize)('EMPLOYEE'), upload_1.uploadMiddleware.single('photo'), workTracking_1.workTrackingController.startWork);
+// Employee: complete work with photo
+router.post('/:id/complete-work', auth_1.authenticate, (0, auth_1.authorize)('EMPLOYEE'), upload_1.uploadMiddleware.single('photo'), workTracking_1.workTrackingController.completeWork);
 exports.default = router;

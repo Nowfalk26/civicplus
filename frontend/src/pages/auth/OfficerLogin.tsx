@@ -4,7 +4,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import toast from 'react-hot-toast';
-import { GoogleLogin, GoogleOAuthProvider } from '@react-oauth/google';
+import { GoogleLogin } from '@react-oauth/google';
 import { useStore } from '../../store/useStore';
 import { api } from '../../lib/api';
 import { GoogleOAuthModal, isGoogleClientIdConfigured, getEffectiveGoogleClientId } from '../../components/auth/GoogleOAuthModal';
@@ -155,20 +155,18 @@ export const OfficerLogin: React.FC = () => {
             {isConfigured ? (
               <div className="flex flex-col items-center gap-1.5 w-full">
                 <div className="w-full flex justify-center">
-                  <GoogleOAuthProvider clientId={currentClientId}>
-                    <GoogleLogin
-                      onSuccess={handleGoogleSuccess}
-                      onError={() => {
-                        toast.error('Officer Google Sign-In failed or was cancelled.');
-                      }}
-                      useOneTap={false}
-                      theme="outline"
-                      size="large"
-                      text="continue_with"
-                      shape="rectangular"
-                      width="360"
-                    />
-                  </GoogleOAuthProvider>
+                  <GoogleLogin
+                    onSuccess={handleGoogleSuccess}
+                    onError={() => {
+                      toast.error('Officer Google Sign-In failed or was cancelled.');
+                    }}
+                    useOneTap={false}
+                    theme="outline"
+                    size="large"
+                    text="continue_with"
+                    shape="rectangular"
+                    width="360"
+                  />
                 </div>
                 <button
                   type="button"

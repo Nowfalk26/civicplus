@@ -137,6 +137,38 @@ export const STATUS_INFO: Record<
     text: 'text-amber-700',
     pinColor: '#f59e0b', // Yellow/Amber
   },
+  VIEWED: {
+    labelEn: 'Viewed',
+    labelTa: 'பார்க்கப்பட்டது',
+    color: '#6366f1',
+    bg: 'bg-indigo-50 border-indigo-200',
+    text: 'text-indigo-700',
+    pinColor: '#6366f1',
+  },
+  SITE_VISIT_COMPLETED: {
+    labelEn: 'Site Visit Completed',
+    labelTa: 'தள பரிசோதனை முடிந்தது',
+    color: '#8b5cf6',
+    bg: 'bg-violet-50 border-violet-200',
+    text: 'text-violet-700',
+    pinColor: '#8b5cf6',
+  },
+  WORK_STARTED: {
+    labelEn: 'Work Started',
+    labelTa: 'பணி தொடங்கியது',
+    color: '#0ea5e9',
+    bg: 'bg-sky-50 border-sky-200',
+    text: 'text-sky-700',
+    pinColor: '#0ea5e9',
+  },
+  WORK_IN_PROGRESS: {
+    labelEn: 'Work In Progress',
+    labelTa: 'பணி நடைபெறுகிறது',
+    color: '#eab308',
+    bg: 'bg-yellow-50 border-yellow-200',
+    text: 'text-yellow-800',
+    pinColor: '#eab308',
+  },
   IN_PROGRESS: {
     labelEn: 'In Progress',
     labelTa: 'செயலில் உள்ளது',
@@ -177,4 +209,34 @@ export function formatDate(dateString?: string | null): string {
   } catch {
     return dateString;
   }
+}
+
+export function formatDuration(ms: number): string {
+  if (!ms || ms <= 0) return '0m';
+  const totalSeconds = Math.floor(ms / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (seconds > 0 && days === 0) parts.push(`${seconds}s`);
+  return parts.join(' ') || '0m';
+}
+
+export function formatDurationLong(ms: number): string {
+  if (!ms || ms <= 0) return '—';
+  const totalSeconds = Math.floor(ms / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days} day${days > 1 ? 's' : ''}`);
+  if (hours > 0) parts.push(`${hours} hour${hours > 1 ? 's' : ''}`);
+  if (minutes > 0) parts.push(`${minutes} minute${minutes > 1 ? 's' : ''}`);
+  if (seconds > 0 && days === 0 && hours === 0) parts.push(`${seconds} second${seconds > 1 ? 's' : ''}`);
+  return parts.join(' ') || '—';
 }

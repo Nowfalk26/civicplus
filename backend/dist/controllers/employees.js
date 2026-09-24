@@ -13,12 +13,16 @@ const ReportVerification_1 = require("../models/ReportVerification");
 const Counter_1 = require("../models/Counter");
 const db_1 = require("../lib/db");
 const createEmployeeSchema = zod_1.z.object({
-    fullName: zod_1.z.string().min(2, 'Full name is required'),
-    email: zod_1.z.string().email('Valid official email required'),
-    phone: zod_1.z.string().regex(/^\+?91?[6-9]\d{9}$/, 'Valid 10-digit Indian phone number required'),
-    department: zod_1.z.string().min(2, 'Department is required'),
-    designation: zod_1.z.string().min(2, 'Designation is required'),
-    assignedZone: zod_1.z.string().min(2, 'Assigned area/zone is required'),
+    fullName: zod_1.z.string().trim().min(2, 'Full name is required (at least 2 characters)'),
+    email: zod_1.z.string().trim().toLowerCase().email('Valid official email required (e.g. user@gmail.com)'),
+    phone: zod_1.z
+        .string()
+        .transform((v) => v.replace(/[\s\-\(\)]/g, ''))
+        .refine((v) => /^(\+?91)?[6-9]\d{9}$/.test(v), 'Valid 10-digit Indian phone number required (e.g. +91 9876543210 or 9876543210)')
+        .transform((v) => (v.startsWith('+91') ? v : v.startsWith('91') && v.length === 12 ? `+${v}` : `+91${v.slice(-10)}`)),
+    department: zod_1.z.string().trim().min(2, 'Department is required'),
+    designation: zod_1.z.string().trim().min(2, 'Designation is required'),
+    assignedZone: zod_1.z.string().trim().min(2, 'Assigned area/zone is required'),
     address: zod_1.z.string().optional(),
     profilePhoto: zod_1.z.string().optional(),
     joiningDate: zod_1.z.string().optional(),
@@ -72,8 +76,10 @@ exports.employeeController = {
             await (0, db_1.connectDb)();
             const validation = createEmployeeSchema.safeParse(req.body);
             if (!validation.success) {
+                const errorMsg = validation.error.errors.map((e) => e.message).join('. ');
                 res.status(400).json({
                     success: false,
+                    message: errorMsg,
                     errors: validation.error.errors.map((e) => e.message),
                 });
                 return;

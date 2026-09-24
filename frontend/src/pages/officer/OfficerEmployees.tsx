@@ -105,8 +105,17 @@ export const OfficerEmployees: React.FC = () => {
     e.preventDefault();
     setSubmitting(true);
     try {
+      const cleanPhone = formData.phone.replace(/[\s\-\(\)]/g, '');
+      const cleanEmail = formData.email.trim();
       const payload: any = {
         ...formData,
+        fullName: formData.fullName.trim(),
+        email: cleanEmail,
+        phone: cleanPhone,
+        designation: formData.designation.trim(),
+        assignedZone: formData.assignedZone.trim(),
+        address: formData.address.trim(),
+        notes: formData.notes.trim(),
       };
       if (!autoGenPassword && customPassword.trim().length >= 6) {
         payload.password = customPassword.trim();
@@ -139,7 +148,11 @@ export const OfficerEmployees: React.FC = () => {
         fetchEmployees();
       }
     } catch (err: any) {
-      toast.error(err.response?.data?.message || 'Failed to create employee.');
+      const errMsg =
+        err.response?.data?.message ||
+        err.response?.data?.errors?.join(', ') ||
+        'Failed to create employee.';
+      toast.error(errMsg);
     } finally {
       setSubmitting(false);
     }

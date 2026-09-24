@@ -12,6 +12,10 @@ export type ComplaintStatus =
   | 'SUBMITTED'
   | 'ACCEPTED'
   | 'ASSIGNED'
+  | 'VIEWED'
+  | 'SITE_VISIT_COMPLETED'
+  | 'WORK_STARTED'
+  | 'WORK_IN_PROGRESS'
   | 'IN_PROGRESS'
   | 'RESOLVED'
   | 'REJECTED';
@@ -32,8 +36,10 @@ export type AssignmentStatus =
 export interface IComplaintPhoto {
   id?: string;
   url: string;
-  type: 'BEFORE' | 'AFTER' | 'EVIDENCE';
+  type: 'BEFORE' | 'AFTER' | 'EVIDENCE' | 'SITE_VISIT' | 'WORK_STARTED' | 'WORK_COMPLETED';
   uploadedAt: Date;
+  uploadedBy?: string | null;
+  description?: string | null;
 }
 
 export interface IComplaintTimeline {
@@ -42,6 +48,8 @@ export interface IComplaintTimeline {
   timestamp: Date;
   officerName?: string;
   notes?: string;
+  actorId?: string;
+  evidenceId?: string;
 }
 
 export interface IComplaintFraudFlag {
@@ -80,6 +88,21 @@ export interface IComplaint extends Document {
   rejectionReason?: string | null;
   resolvedAt?: Date | null;
 
+  // Work Tracking fields
+  dueDate?: Date | null;
+  viewedAt?: Date | null;
+  viewedBy?: mongoose.Types.ObjectId | string | null;
+  siteVisitAt?: Date | null;
+  siteVisitBy?: mongoose.Types.ObjectId | string | null;
+  siteVisitNotes?: string | null;
+  workStartedAt?: Date | null;
+  workStartedBy?: mongoose.Types.ObjectId | string | null;
+  workStartedNotes?: string | null;
+  completedAt?: Date | null;
+  completedBy?: mongoose.Types.ObjectId | string | null;
+  completionNotes?: string | null;
+  workDuration?: number | null; // milliseconds
+
   district?: string | null;
   voiceRecordingUrl?: string | null;
   voiceDuration?: number;
@@ -96,8 +119,10 @@ export interface IComplaint extends Document {
 const PhotoSubSchema = new Schema<IComplaintPhoto>(
   {
     url: { type: String, required: true },
-    type: { type: String, enum: ['BEFORE', 'AFTER', 'EVIDENCE'], default: 'BEFORE' },
+    type: { type: String, enum: ['BEFORE', 'AFTER', 'EVIDENCE', 'SITE_VISIT', 'WORK_STARTED', 'WORK_COMPLETED'], default: 'BEFORE' },
     uploadedAt: { type: Date, default: Date.now },
+    uploadedBy: { type: String, default: null },
+    description: { type: String, default: null },
   },
   { _id: true }
 );
@@ -108,6 +133,8 @@ const TimelineSubSchema = new Schema<IComplaintTimeline>(
     timestamp: { type: Date, default: Date.now },
     officerName: { type: String, default: null },
     notes: { type: String, default: null },
+    actorId: { type: String, default: null },
+    evidenceId: { type: String, default: null },
   },
   { _id: true }
 );
@@ -182,7 +209,7 @@ const ComplaintSchema = new Schema<IComplaint>(
     },
     status: {
       type: String,
-      enum: ['SUBMITTED', 'ACCEPTED', 'ASSIGNED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'],
+      enum: ['SUBMITTED', 'ACCEPTED', 'ASSIGNED', 'VIEWED', 'SITE_VISIT_COMPLETED', 'WORK_STARTED', 'WORK_IN_PROGRESS', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'],
       default: 'SUBMITTED',
       index: true,
     },
@@ -259,6 +286,64 @@ const ComplaintSchema = new Schema<IComplaint>(
     },
     resolvedAt: {
       type: Date,
+      default: null,
+    },
+
+    // Work Tracking
+    dueDate: {
+      type: Date,
+      default: null,
+    },
+    viewedAt: {
+      type: Date,
+      default: null,
+    },
+    viewedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'Employee',
+      default: null,
+    },
+    siteVisitAt: {
+      type: Date,
+      default: null,
+    },
+    siteVisitBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'Employee',
+      default: null,
+    },
+    siteVisitNotes: {
+      type: String,
+      default: null,
+    },
+    workStartedAt: {
+      type: Date,
+      default: null,
+    },
+    workStartedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'Employee',
+      default: null,
+    },
+    workStartedNotes: {
+      type: String,
+      default: null,
+    },
+    completedAt: {
+      type: Date,
+      default: null,
+    },
+    completedBy: {
+      type: Schema.Types.ObjectId,
+      ref: 'Employee',
+      default: null,
+    },
+    completionNotes: {
+      type: String,
+      default: null,
+    },
+    workDuration: {
+      type: Number,
       default: null,
     },
 

@@ -10,12 +10,19 @@ import { connectDb } from '../lib/db';
 import { AuthenticatedRequest } from '../middleware/auth';
 
 const createEmployeeSchema = z.object({
-  fullName: z.string().min(2, 'Full name is required'),
-  email: z.string().email('Valid official email required'),
-  phone: z.string().regex(/^\+?91?[6-9]\d{9}$/, 'Valid 10-digit Indian phone number required'),
-  department: z.string().min(2, 'Department is required'),
-  designation: z.string().min(2, 'Designation is required'),
-  assignedZone: z.string().min(2, 'Assigned area/zone is required'),
+  fullName: z.string().trim().min(2, 'Full name is required (at least 2 characters)'),
+  email: z.string().trim().toLowerCase().email('Valid official email required (e.g. user@gmail.com)'),
+  phone: z
+    .string()
+    .transform((v) => v.replace(/[\s\-\(\)]/g, ''))
+    .refine(
+      (v) => /^(\+?91)?[6-9]\d{9}$/.test(v),
+      'Valid 10-digit Indian phone number required (e.g. +91 9876543210 or 9876543210)'
+    )
+    .transform((v) => (v.startsWith('+91') ? v : v.startsWith('91') && v.length === 12 ? `+${v}` : `+91${v.slice(-10)}`)),
+  department: z.string().trim().min(2, 'Department is required'),
+  designation: z.string().trim().min(2, 'Designation is required'),
+  assignedZone: z.string().trim().min(2, 'Assigned area/zone is required'),
   address: z.string().optional(),
   profilePhoto: z.string().optional(),
   joiningDate: z.string().optional(),
@@ -76,8 +83,10 @@ export const employeeController = {
       await connectDb();
       const validation = createEmployeeSchema.safeParse(req.body);
       if (!validation.success) {
+        const errorMsg = validation.error.errors.map((e) => e.message).join('. ');
         res.status(400).json({
           success: false,
+          message: errorMsg,
           errors: validation.error.errors.map((e) => e.message),
         });
         return;

@@ -7,6 +7,8 @@ const Employee_1 = require("../models/Employee");
 const User_1 = require("../models/User");
 const AssignmentHistory_1 = require("../models/AssignmentHistory");
 const ReportVerification_1 = require("../models/ReportVerification");
+const ComplaintEvent_1 = require("../models/ComplaintEvent");
+const SlaConfig_1 = require("../models/SlaConfig");
 const db_1 = require("../lib/db");
 const generateId_1 = require("../utils/generateId");
 const calculateDistance_1 = require("../utils/calculateDistance");
@@ -297,6 +299,31 @@ exports.complaintController = {
             }
             // Send SMS alert
             await sms_1.smsService.sendComplaintAck(req.user.phone, complaintId, category).catch(() => { });
+            // Calculate and set due date based on SLA
+            try {
+                const resolutionDays = await (0, SlaConfig_1.getResolutionDays)(priority, category);
+                const dueDate = (0, SlaConfig_1.calculateDueDate)(new Date(), resolutionDays);
+                newComplaint.dueDate = dueDate;
+                await newComplaint.save();
+            }
+            catch (slaError) {
+                console.error('SLA calculation error (non-blocking):', slaError);
+            }
+            // Create initial audit event
+            try {
+                await ComplaintEvent_1.ComplaintEvent.create({
+                    complaintId: newComplaint._id,
+                    eventType: 'COMPLAINT_SUBMITTED',
+                    actorId: req.user.id,
+                    actorRole: req.user.role,
+                    actorName: req.user.name || req.user.username,
+                    timestamp: new Date(),
+                    description: 'Citizen complaint submitted.',
+                });
+            }
+            catch (eventError) {
+                console.error('Event creation error (non-blocking):', eventError);
+            }
             console.log(`[COMPLAINT-CREATED] ${complaintId} stored in MongoDB permanently.`);
             res.status(201).json({
                 success: true,
@@ -368,6 +395,23 @@ exports.complaintController = {
                     : `Work order assigned to field staff ${employee.fullName} (${employee.employeeId}). Notes: ${notes || 'Assigned for inspection'}`,
             });
             await complaint.save();
+            // Create assignment audit event
+            try {
+                await ComplaintEvent_1.ComplaintEvent.create({
+                    complaintId: complaint._id,
+                    eventType: isReassignment ? 'REASSIGNED' : 'EMPLOYEE_ASSIGNED',
+                    actorId: req.user.id,
+                    actorRole: req.user.role,
+                    actorName: req.user.name || req.user.username,
+                    timestamp: new Date(),
+                    description: isReassignment
+                        ? `Reassigned from ${previousEmployee?.fullName || 'previous staff'} to ${employee.fullName}`
+                        : `Assigned to ${employee.fullName} (${employee.employeeId})`,
+                });
+            }
+            catch (eventError) {
+                console.error('Event creation error (non-blocking):', eventError);
+            }
             console.log(`[ASSIGNMENT] ${complaint.complaintId} assigned to ${employee.fullName} by ${req.user.username}`);
             res.json({
                 success: true,
@@ -464,7 +508,7 @@ exports.complaintController = {
             await (0, db_1.connectDb)();
             const { id } = req.params;
             const { status, notes, rejectionReason } = req.body;
-            const validStatuses = ['SUBMITTED', 'ACCEPTED', 'ASSIGNED', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'];
+            const validStatuses = ['SUBMITTED', 'ACCEPTED', 'ASSIGNED', 'VIEWED', 'SITE_VISIT_COMPLETED', 'WORK_STARTED', 'WORK_IN_PROGRESS', 'IN_PROGRESS', 'RESOLVED', 'REJECTED'];
             if (!validStatuses.includes(status)) {
                 res.status(400).json({ success: false, message: 'Invalid status stage.' });
                 return;

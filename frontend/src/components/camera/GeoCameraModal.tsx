@@ -50,6 +50,7 @@ export const GeoCameraModal: React.FC<GeoCameraModalProps> = ({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [facingMode, setFacingMode] = useState<'environment' | 'user'>('environment');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameraLoading, setCameraLoading] = useState<boolean>(true);
 
@@ -64,7 +65,17 @@ export const GeoCameraModal: React.FC<GeoCameraModalProps> = ({
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [capturedMeta, setCapturedMeta] = useState<GeoWatermarkMetadata | null>(null);
 
-  // Initialize GPS when modal opens
+  // Bind live media stream to HTML5 video element whenever stream changes
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      if (videoRef.current.srcObject !== stream) {
+        videoRef.current.srcObject = stream;
+      }
+      videoRef.current.play().catch((err) => console.warn('Stream play on effect error:', err));
+    }
+  }, [stream]);
+
+  // Initialize GPS & Camera when modal opens
   useEffect(() => {
     if (isOpen) {
       setCapturedPhoto(null);
@@ -86,23 +97,39 @@ export const GeoCameraModal: React.FC<GeoCameraModalProps> = ({
     }
   };
 
-  const startCamera = async () => {
+  const startCamera = async (overrideFacing?: 'environment' | 'user') => {
     setCameraLoading(true);
     setCameraError(null);
+    const targetFacing = overrideFacing || facingMode;
     try {
-      // Request camera stream with back camera priority (environment)
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1920 },
-          height: { ideal: 1080 },
-        },
-        audio: false,
-      });
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+
+      let mediaStream: MediaStream;
+      try {
+        // Preferred: target facing mode (environment for rear camera, user for front/webcam)
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: targetFacing },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+          audio: false,
+        });
+      } catch (firstErr) {
+        console.warn('Preferred camera constraints failed, attempting fallback to generic video camera:', firstErr);
+        // Robust fallback: any available video input (e.g. laptop webcam)
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: true,
+          audio: false,
+        });
+      }
 
       setStream(mediaStream);
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
+        videoRef.current.play().catch((err) => console.warn('Immediate play error:', err));
       }
     } catch (err: any) {
       console.warn('Direct WebRTC stream unavailable, falling back to camera input capture:', err);
@@ -110,6 +137,12 @@ export const GeoCameraModal: React.FC<GeoCameraModalProps> = ({
     } finally {
       setCameraLoading(false);
     }
+  };
+
+  const toggleFacingMode = () => {
+    const nextFacing = facingMode === 'environment' ? 'user' : 'environment';
+    setFacingMode(nextFacing);
+    startCamera(nextFacing);
   };
 
   const fetchGpsLocation = () => {
@@ -218,12 +251,14 @@ export const GeoCameraModal: React.FC<GeoCameraModalProps> = ({
   const handleSnapLiveCamera = () => {
     if (!videoRef.current) return;
     const video = videoRef.current;
-    if (video.videoWidth === 0 || video.videoHeight === 0) {
+    const vWidth = video.videoWidth || video.clientWidth || 1280;
+    const vHeight = video.videoHeight || video.clientHeight || 720;
+    if (vWidth === 0 || vHeight === 0) {
       toast.error('Camera stream not ready yet. Please wait a moment.');
       return;
     }
 
-    processAndWatermark(video, video.videoWidth, video.videoHeight);
+    processAndWatermark(video, vWidth, vHeight);
   };
 
   /**
@@ -371,12 +406,21 @@ export const GeoCameraModal: React.FC<GeoCameraModalProps> = ({
             /* Live Camera Stream with HUD */
             <div className="relative w-full h-full">
               <video
-                ref={videoRef}
+                ref={(node) => {
+                  videoRef.current = node;
+                  if (node && stream && node.srcObject !== stream) {
+                    node.srcObject = stream;
+                    node.play().catch((err) => console.warn('Video callback play error:', err));
+                  }
+                }}
                 autoPlay
                 playsInline
                 muted
                 className="w-full h-full object-cover"
-                onLoadedMetadata={() => videoRef.current?.play()}
+                onLoadedMetadata={(e) => {
+                  const target = e.currentTarget;
+                  target.play().catch((err) => console.warn('LoadedMetadata play error:', err));
+                }}
               />
 
               {/* Viewfinder crosshairs */}
@@ -387,6 +431,19 @@ export const GeoCameraModal: React.FC<GeoCameraModalProps> = ({
                   <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-primary" />
                   <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-primary" />
                 </div>
+              </div>
+
+              {/* Camera Switch / Flip Button */}
+              <div className="absolute top-3 right-3 pointer-events-auto z-10">
+                <button
+                  type="button"
+                  onClick={toggleFacingMode}
+                  className="px-2.5 py-1 rounded-xl bg-black/60 hover:bg-black/80 text-white font-bold text-[10px] flex items-center gap-1 backdrop-blur-xs transition-colors shadow-sm cursor-pointer"
+                  title="Switch Camera (Front / Back)"
+                >
+                  <span className="material-symbols-outlined text-[14px]">flip_camera_ios</span>
+                  <span>Switch Camera</span>
+                </button>
               </div>
 
               {/* Live HUD info overlay */}

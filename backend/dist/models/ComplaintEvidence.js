@@ -69,6 +69,30 @@ const ComplaintEvidenceSchema = new mongoose_1.Schema({
         type: String,
         default: null,
     },
+    latitude: {
+        type: Number,
+        default: null,
+    },
+    longitude: {
+        type: Number,
+        default: null,
+    },
+    capturedAt: {
+        type: Date,
+        default: null,
+    },
+    distanceFromSiteKm: {
+        type: Number,
+        default: null,
+    },
+    isLocationVerified: {
+        type: Boolean,
+        default: null,
+    },
+    watermarkText: {
+        type: String,
+        default: null,
+    },
 }, {
     timestamps: true,
     toJSON: {

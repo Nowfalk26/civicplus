@@ -4,6 +4,8 @@ import { CategoryBadge } from '../../components/ui/Badge';
 import { formatDate } from '../../lib/utils';
 import { api } from '../../lib/api';
 import { Modal } from '../../components/ui/Modal';
+import { GeoCameraModal } from '../../components/camera/GeoCameraModal';
+import { formatCoordinates } from '../../utils/geoWatermark';
 
 export const EmployeeDashboard: React.FC = () => {
   const [reports, setReports] = useState<any[]>([]);
@@ -24,6 +26,18 @@ export const EmployeeDashboard: React.FC = () => {
   const [actionNotes, setActionNotes] = useState('');
   const [actionPhoto, setActionPhoto] = useState<string | null>(null);
   const [actionSubmitting, setActionSubmitting] = useState(false);
+
+  // Geo-Stamped Work Evidence Camera states
+  const [geoCameraOpen, setGeoCameraOpen] = useState(false);
+  const [geoCameraStage, setGeoCameraStage] = useState<'SITE INSPECTION' | 'WORK STARTED' | 'WORK COMPLETED'>('SITE INSPECTION');
+  const [geoEvidence, setGeoEvidence] = useState<{
+    photoUrl: string;
+    latitude: number;
+    longitude: number;
+    capturedAt: string;
+    isLocationConfirmed: boolean;
+    distanceKm: number;
+  } | null>(null);
 
   useEffect(() => {
     fetchMyReports();
@@ -127,6 +141,45 @@ export const EmployeeDashboard: React.FC = () => {
     setWorkAction(null);
     setActionNotes('');
     setActionPhoto(null);
+    setGeoEvidence(null);
+    setGeoCameraOpen(false);
+  };
+
+  const handleOpenSiteVisit = (report: any) => {
+    setSelectedReport(report);
+    setWorkAction('site-visit');
+    setGeoCameraStage('SITE INSPECTION');
+    setGeoEvidence(null);
+    setGeoCameraOpen(true);
+  };
+
+  const handleOpenStartWork = (report: any) => {
+    setSelectedReport(report);
+    setWorkAction('start-work');
+    setGeoCameraStage('WORK STARTED');
+    setGeoEvidence(null);
+    setGeoCameraOpen(true);
+  };
+
+  const handleOpenCompleteWork = (report: any) => {
+    setSelectedReport(report);
+    setWorkAction('complete-work');
+    setGeoCameraStage('WORK COMPLETED');
+    setGeoEvidence(null);
+    setGeoCameraOpen(true);
+  };
+
+  const handleGeoCaptureConfirmed = (data: {
+    photoUrl: string;
+    latitude: number;
+    longitude: number;
+    capturedAt: string;
+    isLocationConfirmed: boolean;
+    distanceKm: number;
+  }) => {
+    setGeoEvidence(data);
+    setActionPhoto(data.photoUrl);
+    setGeoCameraOpen(false);
   };
 
   const handleWorkAction = async (reportId: string, action: string) => {
@@ -140,15 +193,33 @@ export const EmployeeDashboard: React.FC = () => {
           break;
         case 'site-visit':
           endpoint = `/complaints/${reportId}/site-visit`;
-          payload = { visitNotes: actionNotes, photoUrl: actionPhoto };
+          payload = {
+            visitNotes: actionNotes,
+            photoUrl: geoEvidence?.photoUrl || actionPhoto,
+            latitude: geoEvidence?.latitude,
+            longitude: geoEvidence?.longitude,
+            capturedAt: geoEvidence?.capturedAt,
+          };
           break;
         case 'start-work':
           endpoint = `/complaints/${reportId}/start-work`;
-          payload = { description: actionNotes, photoUrl: actionPhoto };
+          payload = {
+            description: actionNotes,
+            photoUrl: geoEvidence?.photoUrl || actionPhoto,
+            latitude: geoEvidence?.latitude,
+            longitude: geoEvidence?.longitude,
+            capturedAt: geoEvidence?.capturedAt,
+          };
           break;
         case 'complete-work':
           endpoint = `/complaints/${reportId}/complete-work`;
-          payload = { description: actionNotes, photoUrl: actionPhoto };
+          payload = {
+            description: actionNotes,
+            photoUrl: geoEvidence?.photoUrl || actionPhoto,
+            latitude: geoEvidence?.latitude,
+            longitude: geoEvidence?.longitude,
+            capturedAt: geoEvidence?.capturedAt,
+          };
           break;
       }
       const res = await api.post(endpoint, payload);
@@ -360,33 +431,33 @@ export const EmployeeDashboard: React.FC = () => {
                         {['ASSIGNED', 'VIEWED'].includes(r.status) && !r.siteVisitAt && (
                           <button
                             type="button"
-                            onClick={() => { setSelectedReport(r); setWorkAction('site-visit'); }}
-                            className="px-2.5 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors"
+                            onClick={() => handleOpenSiteVisit(r)}
+                            className="px-2.5 py-1.5 rounded-xl bg-violet-600 hover:bg-violet-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors shadow-xs"
                           >
-                            <span className="material-symbols-outlined text-[13px]">location_on</span>
-                            Site Visit
+                            <span className="material-symbols-outlined text-[13px]">photo_camera</span>
+                            <span>Start Site Inspection</span>
                           </button>
                         )}
 
                         {['ASSIGNED', 'VIEWED', 'SITE_VISIT_COMPLETED'].includes(r.status) && !r.workStartedAt && (
                           <button
                             type="button"
-                            onClick={() => { setSelectedReport(r); setWorkAction('start-work'); }}
-                            className="px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors"
+                            onClick={() => handleOpenStartWork(r)}
+                            className="px-2.5 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors shadow-xs"
                           >
-                            <span className="material-symbols-outlined text-[13px]">construction</span>
-                            Start Work
+                            <span className="material-symbols-outlined text-[13px]">photo_camera</span>
+                            <span>Start Work</span>
                           </button>
                         )}
 
                         {['WORK_STARTED', 'WORK_IN_PROGRESS', 'IN_PROGRESS'].includes(r.status) && r.workStartedAt && !r.completedAt && (
                           <button
                             type="button"
-                            onClick={() => { setSelectedReport(r); setWorkAction('complete-work'); }}
-                            className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors"
+                            onClick={() => handleOpenCompleteWork(r)}
+                            className="px-2.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] flex items-center gap-1 transition-colors shadow-xs"
                           >
-                            <span className="material-symbols-outlined text-[13px]">check_circle</span>
-                            Complete
+                            <span className="material-symbols-outlined text-[13px]">photo_camera</span>
+                            <span>Complete Work</span>
                           </button>
                         )}
                       </div>
@@ -539,19 +610,59 @@ export const EmployeeDashboard: React.FC = () => {
               </div>
               <div>
                 <label className="font-bold text-on-surface block mb-1">
-                  {workAction === 'site-visit' ? 'Site Visit Photo' :
-                   workAction === 'start-work' ? 'Work Start Photo' :
-                   'Completion Photo'} *
+                  Mandatory Geo-Stamped Evidence Photo *
                 </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  onChange={handlePhotoChange}
-                  className="w-full text-xs file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:bg-primary file:text-white file:font-bold file:cursor-pointer"
-                />
-                {actionPhoto && (
-                  <img src={actionPhoto} alt="Preview" className="mt-2 w-full h-32 object-cover rounded-xl border border-surface-container" />
+                {geoEvidence?.photoUrl || actionPhoto ? (
+                  <div className="space-y-2">
+                    <div className="relative rounded-xl overflow-hidden border border-surface-container bg-black max-h-52 flex items-center justify-center">
+                      <img
+                        src={geoEvidence?.photoUrl || actionPhoto!}
+                        alt="Geo-stamped evidence preview"
+                        className="w-full h-full object-contain"
+                      />
+                      <div className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-black/75 text-emerald-400 font-bold text-[9px] flex items-center gap-1 backdrop-blur-xs">
+                        <span className="material-symbols-outlined text-[12px]">verified</span>
+                        <span>Geo-Watermarked</span>
+                      </div>
+                    </div>
+
+                    <div className="p-2.5 rounded-xl bg-surface-container-low border border-surface-container flex items-center justify-between text-[11px]">
+                      <div>
+                        <p className="font-bold text-on-surface flex items-center gap-1">
+                          <span className="material-symbols-outlined text-[14px] text-primary">location_on</span>
+                          <span className="font-mono">
+                            {geoEvidence ? formatCoordinates(geoEvidence.latitude, geoEvidence.longitude) : 'GPS Acquired'}
+                          </span>
+                        </p>
+                        <p className={`text-[10px] font-semibold mt-0.5 ${
+                          geoEvidence?.isLocationConfirmed ? 'text-emerald-700' : 'text-amber-700'
+                        }`}>
+                          {geoEvidence?.isLocationConfirmed ? '✓ Complaint Location Confirmed' : '⚠ Off-site Inspection'}
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setGeoCameraOpen(true)}
+                        className="px-2.5 py-1.5 rounded-xl bg-white border border-outline-variant hover:bg-surface-container font-bold text-[10px] flex items-center gap-1 transition-colors"
+                      >
+                        <span className="material-symbols-outlined text-[13px] text-primary">photo_camera</span>
+                        <span>Retake with Camera</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setGeoCameraOpen(true)}
+                    className="w-full py-5 px-4 rounded-xl border-2 border-dashed border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary font-bold text-xs flex flex-col items-center justify-center gap-1.5 transition-colors cursor-pointer"
+                  >
+                    <span className="material-symbols-outlined text-3xl">photo_camera</span>
+                    <span className="text-xs font-bold text-primary">Capture Mandatory Camera Evidence</span>
+                    <span className="text-[10px] text-on-surface-variant font-normal">
+                      Opens device camera directly • Auto-burns GPS, date & time watermark
+                    </span>
+                  </button>
                 )}
               </div>
             </>
@@ -568,7 +679,7 @@ export const EmployeeDashboard: React.FC = () => {
             <button
               type="button"
               onClick={() => selectedReport && handleWorkAction(selectedReport.id, workAction!)}
-              disabled={actionSubmitting || (workAction !== 'acknowledge' && (!actionNotes.trim() || !actionPhoto))}
+              disabled={actionSubmitting || (workAction !== 'acknowledge' && (!actionNotes.trim() || !(geoEvidence?.photoUrl || actionPhoto)))}
               className="px-4 py-2 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold disabled:opacity-50"
             >
               {actionSubmitting ? 'Processing...' :
@@ -580,6 +691,18 @@ export const EmployeeDashboard: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* Geo-Stamped Work Evidence Camera Modal */}
+      {selectedReport && (
+        <GeoCameraModal
+          isOpen={geoCameraOpen}
+          onClose={() => setGeoCameraOpen(false)}
+          stageTitle={geoCameraStage}
+          complaint={selectedReport}
+          employeeProfile={employeeProfile}
+          onCaptureConfirmed={handleGeoCaptureConfirmed}
+        />
+      )}
     </div>
   );
 };

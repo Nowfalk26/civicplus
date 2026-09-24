@@ -41,6 +41,11 @@ const PhotoSubSchema = new mongoose_1.Schema({
     uploadedAt: { type: Date, default: Date.now },
     uploadedBy: { type: String, default: null },
     description: { type: String, default: null },
+    latitude: { type: Number, default: null },
+    longitude: { type: Number, default: null },
+    capturedAt: { type: Date, default: null },
+    isLocationVerified: { type: Boolean, default: null },
+    distanceFromSiteKm: { type: Number, default: null },
 }, { _id: true });
 const TimelineSubSchema = new mongoose_1.Schema({
     stage: { type: String, required: true },

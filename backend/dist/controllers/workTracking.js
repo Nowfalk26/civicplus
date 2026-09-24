@@ -10,6 +10,7 @@ const db_1 = require("../lib/db");
 const upload_1 = require("../middleware/upload");
 const sms_1 = require("../services/sms");
 const email_1 = require("../services/email");
+const calculateDistance_1 = require("../utils/calculateDistance");
 /**
  * Helper: resolve a photo URL from either a multer file upload or a body URL/base64 string.
  */
@@ -127,15 +128,24 @@ exports.workTrackingController = {
             const complaint = await findAssignedComplaint(req.params.id, employee._id, res);
             if (!complaint)
                 return;
-            const { visitNotes, latitude, longitude } = req.body;
+            const { visitNotes, latitude, longitude, capturedAt, watermarkText } = req.body;
             if (!visitNotes || typeof visitNotes !== 'string' || visitNotes.trim().length === 0) {
                 res.status(400).json({ success: false, message: 'Inspection notes are required for site visit.' });
                 return;
             }
             const photoUrl = await resolvePhotoUrl(req);
             if (!photoUrl) {
-                res.status(400).json({ success: false, message: 'A site visit photo is required.' });
+                res.status(400).json({ success: false, message: 'A camera-captured site visit photo is required.' });
                 return;
+            }
+            const numLat = latitude !== undefined && latitude !== null ? Number(latitude) : null;
+            const numLon = longitude !== undefined && longitude !== null ? Number(longitude) : null;
+            let distKm = null;
+            let isLocationVerified = true;
+            if (numLat !== null && numLon !== null && !isNaN(numLat) && !isNaN(numLon) && complaint.latitude && complaint.longitude) {
+                distKm = Number((0, calculateDistance_1.calculateDistance)(numLat, numLon, complaint.latitude, complaint.longitude).toFixed(3));
+                const geofenceRadius = Number(process.env.GEOFENCE_RADIUS_KM) || 0.5; // 500 meters default
+                isLocationVerified = distKm <= geofenceRadius;
             }
             // Auto-acknowledge if not yet viewed
             if (!complaint.viewedAt) {
@@ -148,6 +158,7 @@ exports.workTrackingController = {
             if (statusIndex(complaint.status) < statusIndex('SITE_VISIT_COMPLETED')) {
                 complaint.status = 'SITE_VISIT_COMPLETED';
             }
+            const captureDate = capturedAt ? new Date(capturedAt) : new Date();
             // Create evidence record
             const evidence = await ComplaintEvidence_1.ComplaintEvidence.create({
                 complaintId: complaint._id,
@@ -157,6 +168,12 @@ exports.workTrackingController = {
                 uploadedByName: `${employee.fullName} (${employee.employeeId})`,
                 uploadedAt: new Date(),
                 description: visitNotes.trim(),
+                latitude: numLat,
+                longitude: numLon,
+                capturedAt: captureDate,
+                distanceFromSiteKm: distKm,
+                isLocationVerified,
+                watermarkText: watermarkText || null,
             });
             // Add photo to complaint
             complaint.photos.push({
@@ -165,12 +182,20 @@ exports.workTrackingController = {
                 uploadedAt: new Date(),
                 uploadedBy: `${employee.fullName} (${employee.employeeId})`,
                 description: visitNotes.trim(),
+                latitude: numLat,
+                longitude: numLon,
+                capturedAt: captureDate,
+                distanceFromSiteKm: distKm,
+                isLocationVerified,
             });
+            const locationTag = numLat && numLon
+                ? ` • GPS: ${numLat.toFixed(4)}° N, ${numLon.toFixed(4)}° E (${isLocationVerified ? 'Location Confirmed' : `${Math.round((distKm || 0) * 1000)}m from site`})`
+                : '';
             complaint.timeline.push({
                 stage: 'SITE_VISIT_COMPLETED',
                 timestamp: new Date(),
                 officerName: `${employee.fullName} (${employee.employeeId})`,
-                notes: visitNotes.trim(),
+                notes: `${visitNotes.trim()}${locationTag}`,
                 actorId: req.user.id,
                 evidenceId: evidence._id.toString(),
             });
@@ -182,14 +207,20 @@ exports.workTrackingController = {
                 actorRole: 'EMPLOYEE',
                 actorName: `${employee.fullName} (${employee.employeeId})`,
                 timestamp: new Date(),
-                description: `Site visit completed. ${visitNotes.trim()}`,
+                description: `Site visit completed. ${visitNotes.trim()}${locationTag}`,
                 evidenceId: evidence._id,
-                metadata: latitude && longitude ? { latitude, longitude } : null,
+                metadata: {
+                    latitude: numLat,
+                    longitude: numLon,
+                    capturedAt: captureDate.toISOString(),
+                    distanceFromSiteKm: distKm,
+                    isLocationVerified,
+                },
             }).catch((e) => console.error('Event creation error:', e));
-            console.log(`[SITE-VISIT] ${complaint.complaintId} by ${employee.fullName}`);
+            console.log(`[SITE-VISIT] ${complaint.complaintId} by ${employee.fullName} (Verified: ${isLocationVerified})`);
             res.json({
                 success: true,
-                message: 'Site visit recorded successfully.',
+                message: 'Site visit recorded with geo-stamped evidence successfully.',
                 complaint: complaint.toJSON(),
             });
         }
@@ -215,15 +246,24 @@ exports.workTrackingController = {
                 res.status(400).json({ success: false, message: 'Work has already been started on this complaint.' });
                 return;
             }
-            const { description } = req.body;
+            const { description, latitude, longitude, capturedAt, watermarkText } = req.body;
             if (!description || typeof description !== 'string' || description.trim().length === 0) {
                 res.status(400).json({ success: false, message: 'Work start description is required.' });
                 return;
             }
             const photoUrl = await resolvePhotoUrl(req);
             if (!photoUrl) {
-                res.status(400).json({ success: false, message: 'A work-start photo is required.' });
+                res.status(400).json({ success: false, message: 'A camera-captured work-start photo is required.' });
                 return;
+            }
+            const numLat = latitude !== undefined && latitude !== null ? Number(latitude) : null;
+            const numLon = longitude !== undefined && longitude !== null ? Number(longitude) : null;
+            let distKm = null;
+            let isLocationVerified = true;
+            if (numLat !== null && numLon !== null && !isNaN(numLat) && !isNaN(numLon) && complaint.latitude && complaint.longitude) {
+                distKm = Number((0, calculateDistance_1.calculateDistance)(numLat, numLon, complaint.latitude, complaint.longitude).toFixed(3));
+                const geofenceRadius = Number(process.env.GEOFENCE_RADIUS_KM) || 0.5;
+                isLocationVerified = distKm <= geofenceRadius;
             }
             // Auto-acknowledge if not yet viewed
             if (!complaint.viewedAt) {
@@ -231,6 +271,7 @@ exports.workTrackingController = {
                 complaint.viewedBy = employee._id;
             }
             const workStartedAt = new Date();
+            const captureDate = capturedAt ? new Date(capturedAt) : workStartedAt;
             complaint.workStartedAt = workStartedAt;
             complaint.workStartedBy = employee._id;
             complaint.workStartedNotes = description.trim();
@@ -242,21 +283,35 @@ exports.workTrackingController = {
                 fileUrl: photoUrl,
                 uploadedBy: req.user.id,
                 uploadedByName: `${employee.fullName} (${employee.employeeId})`,
-                uploadedAt: new Date(),
+                uploadedAt: workStartedAt,
                 description: description.trim(),
+                latitude: numLat,
+                longitude: numLon,
+                capturedAt: captureDate,
+                distanceFromSiteKm: distKm,
+                isLocationVerified,
+                watermarkText: watermarkText || null,
             });
             complaint.photos.push({
                 url: photoUrl,
                 type: 'WORK_STARTED',
-                uploadedAt: new Date(),
+                uploadedAt: workStartedAt,
                 uploadedBy: `${employee.fullName} (${employee.employeeId})`,
                 description: description.trim(),
+                latitude: numLat,
+                longitude: numLon,
+                capturedAt: captureDate,
+                distanceFromSiteKm: distKm,
+                isLocationVerified,
             });
+            const locationTag = numLat && numLon
+                ? ` • GPS: ${numLat.toFixed(4)}° N, ${numLon.toFixed(4)}° E (${isLocationVerified ? 'Location Confirmed' : `${Math.round((distKm || 0) * 1000)}m away`})`
+                : '';
             complaint.timeline.push({
                 stage: 'WORK_STARTED',
                 timestamp: workStartedAt,
                 officerName: `${employee.fullName} (${employee.employeeId})`,
-                notes: description.trim(),
+                notes: `${description.trim()}${locationTag}`,
                 actorId: req.user.id,
                 evidenceId: evidence._id.toString(),
             });
@@ -268,13 +323,20 @@ exports.workTrackingController = {
                 actorRole: 'EMPLOYEE',
                 actorName: `${employee.fullName} (${employee.employeeId})`,
                 timestamp: workStartedAt,
-                description: `Work started: ${description.trim()}`,
+                description: `Work started: ${description.trim()}${locationTag}`,
                 evidenceId: evidence._id,
+                metadata: {
+                    latitude: numLat,
+                    longitude: numLon,
+                    capturedAt: captureDate.toISOString(),
+                    distanceFromSiteKm: distKm,
+                    isLocationVerified,
+                },
             }).catch((e) => console.error('Event creation error:', e));
-            console.log(`[WORK-STARTED] ${complaint.complaintId} by ${employee.fullName}`);
+            console.log(`[WORK-STARTED] ${complaint.complaintId} by ${employee.fullName} (Verified: ${isLocationVerified})`);
             res.json({
                 success: true,
-                message: 'Work started. Timer is now running.',
+                message: 'Work started with geo-stamped evidence. Timer is now running.',
                 complaint: complaint.toJSON(),
                 workStartedAt: workStartedAt.toISOString(),
             });
@@ -305,17 +367,27 @@ exports.workTrackingController = {
                 res.status(400).json({ success: false, message: 'Work has already been completed.' });
                 return;
             }
-            const { description } = req.body;
+            const { description, latitude, longitude, capturedAt, watermarkText } = req.body;
             if (!description || typeof description !== 'string' || description.trim().length === 0) {
                 res.status(400).json({ success: false, message: 'Completion description is required.' });
                 return;
             }
             const photoUrl = await resolvePhotoUrl(req);
             if (!photoUrl) {
-                res.status(400).json({ success: false, message: 'A completion photo is required.' });
+                res.status(400).json({ success: false, message: 'A camera-captured completion photo is required.' });
                 return;
             }
+            const numLat = latitude !== undefined && latitude !== null ? Number(latitude) : null;
+            const numLon = longitude !== undefined && longitude !== null ? Number(longitude) : null;
+            let distKm = null;
+            let isLocationVerified = true;
+            if (numLat !== null && numLon !== null && !isNaN(numLat) && !isNaN(numLon) && complaint.latitude && complaint.longitude) {
+                distKm = Number((0, calculateDistance_1.calculateDistance)(numLat, numLon, complaint.latitude, complaint.longitude).toFixed(3));
+                const geofenceRadius = Number(process.env.GEOFENCE_RADIUS_KM) || 0.5;
+                isLocationVerified = distKm <= geofenceRadius;
+            }
             const completedAt = new Date();
+            const captureDate = capturedAt ? new Date(capturedAt) : completedAt;
             const workDuration = completedAt.getTime() - new Date(complaint.workStartedAt).getTime();
             complaint.completedAt = completedAt;
             complaint.completedBy = employee._id;
@@ -332,6 +404,12 @@ exports.workTrackingController = {
                 uploadedByName: `${employee.fullName} (${employee.employeeId})`,
                 uploadedAt: completedAt,
                 description: description.trim(),
+                latitude: numLat,
+                longitude: numLon,
+                capturedAt: captureDate,
+                distanceFromSiteKm: distKm,
+                isLocationVerified,
+                watermarkText: watermarkText || null,
             });
             complaint.photos.push({
                 url: photoUrl,
@@ -339,12 +417,20 @@ exports.workTrackingController = {
                 uploadedAt: completedAt,
                 uploadedBy: `${employee.fullName} (${employee.employeeId})`,
                 description: description.trim(),
+                latitude: numLat,
+                longitude: numLon,
+                capturedAt: captureDate,
+                distanceFromSiteKm: distKm,
+                isLocationVerified,
             });
+            const locationTag = numLat && numLon
+                ? ` • GPS: ${numLat.toFixed(4)}° N, ${numLon.toFixed(4)}° E (${isLocationVerified ? 'Location Confirmed' : `${Math.round((distKm || 0) * 1000)}m away`})`
+                : '';
             complaint.timeline.push({
                 stage: 'RESOLVED',
                 timestamp: completedAt,
                 officerName: `${employee.fullName} (${employee.employeeId})`,
-                notes: `Work completed. Duration: ${Math.round(workDuration / 60000)} minutes. ${description.trim()}`,
+                notes: `Work completed. Duration: ${Math.round(workDuration / 60000)} minutes. ${description.trim()}${locationTag}`,
                 actorId: req.user.id,
                 evidenceId: evidence._id.toString(),
             });
@@ -356,9 +442,16 @@ exports.workTrackingController = {
                 actorRole: 'EMPLOYEE',
                 actorName: `${employee.fullName} (${employee.employeeId})`,
                 timestamp: completedAt,
-                description: `Work completed: ${description.trim()}. Total work duration: ${Math.round(workDuration / 60000)} minutes.`,
+                description: `Work completed: ${description.trim()}. Total work duration: ${Math.round(workDuration / 60000)} minutes.${locationTag}`,
                 evidenceId: evidence._id,
-                metadata: { workDuration },
+                metadata: {
+                    workDuration,
+                    latitude: numLat,
+                    longitude: numLon,
+                    capturedAt: captureDate.toISOString(),
+                    distanceFromSiteKm: distKm,
+                    isLocationVerified,
+                },
             }).catch((e) => console.error('Event creation error:', e));
             // Notify citizen
             const citizen = await User_1.User.findById(complaint.reportedById);

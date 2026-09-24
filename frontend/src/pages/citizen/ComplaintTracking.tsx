@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../../lib/api';
 import { STATUS_INFO, formatDate, formatDuration } from '../../lib/utils';
 import { StatusBadge, PriorityBadge, CategoryBadge } from '../../components/ui/Badge';
+import { formatCoordinates } from '../../utils/geoWatermark';
 
 const WORKFLOW_STAGES = [
   { key: 'SUBMITTED', label: 'Complaint Submitted', labelTa: 'புகார் சமர்ப்பிக்கப்பட்டது', icon: 'edit_note' },
@@ -258,14 +259,47 @@ export const ComplaintTracking: React.FC = () => {
                             </p>
                           )}
                           {stageEvidence && (
-                            <div className="mt-1">
-                              <a href={stageEvidence.fileUrl} target="_blank" rel="noreferrer" className="inline-block">
-                                <img src={stageEvidence.fileUrl} alt={`${stage.label} evidence`}
-                                  className="w-32 h-24 object-cover rounded-xl border border-surface-container shadow-xs" />
+                            <div className="mt-2 p-2.5 rounded-xl bg-surface-container-low border border-surface-container space-y-2 max-w-sm">
+                              <a href={stageEvidence.fileUrl} target="_blank" rel="noreferrer" className="block relative rounded-lg overflow-hidden group">
+                                <img
+                                  src={stageEvidence.fileUrl}
+                                  alt={`${stage.label} evidence`}
+                                  className="w-full h-32 object-cover rounded-lg border border-surface-container shadow-xs group-hover:scale-102 transition-transform"
+                                />
+                                <div className="absolute top-1.5 right-1.5 px-2 py-0.5 rounded-full bg-black/75 text-emerald-400 font-bold text-[9px] flex items-center gap-0.5 backdrop-blur-xs">
+                                  <span className="material-symbols-outlined text-[11px]">verified</span>
+                                  <span>Geo-Stamped</span>
+                                </div>
                               </a>
-                              {stageEvidence.description && (
-                                <p className="text-[11px] text-on-surface-variant mt-1 italic">"{stageEvidence.description}"</p>
-                              )}
+
+                              <div className="space-y-1 text-[11px]">
+                                {stageEvidence.latitude && stageEvidence.longitude ? (
+                                  <div className="flex items-center justify-between text-on-surface">
+                                    <span className="font-mono font-bold flex items-center gap-1">
+                                      <span className="material-symbols-outlined text-[13px] text-primary">location_on</span>
+                                      {formatCoordinates(stageEvidence.latitude, stageEvidence.longitude)}
+                                    </span>
+                                    {stageEvidence.isLocationVerified ? (
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                        ✓ Verified On-Site
+                                      </span>
+                                    ) : stageEvidence.distanceFromSiteKm ? (
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                                        {Math.round(stageEvidence.distanceFromSiteKm * 1000)}m away
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+
+                                <p className="text-on-surface-variant text-[10px] flex items-center gap-1">
+                                  <span className="material-symbols-outlined text-[12px]">schedule</span>
+                                  Captured: {formatDate(stageEvidence.capturedAt || stageEvidence.uploadedAt)}
+                                </p>
+
+                                {stageEvidence.description && (
+                                  <p className="text-on-surface italic text-[11px]">"{stageEvidence.description}"</p>
+                                )}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -336,26 +370,59 @@ export const ComplaintTracking: React.FC = () => {
       {/* Evidence Gallery */}
       {evidence && evidence.length > 0 && (
         <div className="bg-white rounded-2xl p-5 border border-surface-container shadow-sm space-y-4">
-          <h2 className="font-bold text-sm text-on-surface flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-[18px] text-primary">photo_library</span>
-            Work Evidence Gallery
-          </h2>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <div className="flex items-center justify-between">
+            <h2 className="font-bold text-sm text-on-surface flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[18px] text-primary">photo_library</span>
+              Geo-Stamped Work Evidence
+            </h2>
+            <span className="text-[11px] text-on-surface-variant font-medium">
+              Camera-captured on ground with GPS & timestamp watermark
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 gap-4">
             {evidence.map((ev: any, idx: number) => (
-              <div key={idx} className="space-y-2">
-                <div className="relative">
+              <div key={idx} className="bg-surface-container-lowest p-3 rounded-2xl border border-surface-container shadow-xs space-y-2.5">
+                <div className="relative rounded-xl overflow-hidden aspect-[4/3] bg-black">
                   <a href={ev.fileUrl} target="_blank" rel="noreferrer">
-                    <img src={ev.fileUrl} alt={ev.type}
-                      className="w-full h-32 object-cover rounded-xl border border-surface-container" />
+                    <img
+                      src={ev.fileUrl}
+                      alt={ev.type}
+                      className="w-full h-full object-cover hover:scale-105 transition-transform duration-300"
+                    />
                   </a>
-                  <span className="absolute top-2 left-2 px-2 py-0.5 rounded-lg bg-black/70 text-white text-[10px] font-bold">
+                  <span className="absolute top-2 left-2 px-2 py-0.5 rounded-lg bg-black/75 text-white text-[10px] font-bold backdrop-blur-xs">
                     {evidenceTypeLabel(ev.type)}
                   </span>
+                  {ev.isLocationVerified && (
+                    <span className="absolute top-2 right-2 px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[9px] font-bold flex items-center gap-0.5 shadow-xs">
+                      <span className="material-symbols-outlined text-[11px]">verified</span>
+                      <span>GPS Confirmed</span>
+                    </span>
+                  )}
                 </div>
-                <div className="text-[11px] text-on-surface-variant space-y-0.5">
-                  <p className="font-semibold">{ev.uploadedByName}</p>
-                  <p>{formatDate(ev.uploadedAt)}</p>
-                  {ev.description && <p className="italic line-clamp-2">"{ev.description}"</p>}
+
+                <div className="text-[11px] text-on-surface-variant space-y-1">
+                  <div className="flex items-center justify-between text-on-surface font-semibold">
+                    <span className="truncate">{ev.uploadedByName}</span>
+                    <span className="text-[10px] text-on-surface-variant shrink-0 font-normal">
+                      {formatDate(ev.capturedAt || ev.uploadedAt)}
+                    </span>
+                  </div>
+
+                  {ev.latitude && ev.longitude ? (
+                    <p className="font-mono text-[10px] text-on-surface flex items-center gap-1 bg-surface-container-low px-2 py-1 rounded-lg border border-surface-container">
+                      <span className="material-symbols-outlined text-[12px] text-primary shrink-0">location_on</span>
+                      <span className="truncate">{formatCoordinates(ev.latitude, ev.longitude)}</span>
+                      {ev.distanceFromSiteKm !== null && ev.distanceFromSiteKm !== undefined && (
+                        <span className="ml-auto text-[9px] text-on-surface-variant shrink-0">
+                          {Math.round(ev.distanceFromSiteKm * 1000)}m
+                        </span>
+                      )}
+                    </p>
+                  ) : null}
+
+                  {ev.description && <p className="italic text-on-surface text-[11px] line-clamp-2">"{ev.description}"</p>}
                 </div>
               </div>
             ))}

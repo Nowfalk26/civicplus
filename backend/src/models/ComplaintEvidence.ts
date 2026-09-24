@@ -15,6 +15,12 @@ export interface IComplaintEvidence extends Document {
   uploadedByName: string;
   uploadedAt: Date;
   description?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  capturedAt?: Date | null;
+  distanceFromSiteKm?: number | null;
+  isLocationVerified?: boolean | null;
+  watermarkText?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -51,6 +57,30 @@ const ComplaintEvidenceSchema = new Schema<IComplaintEvidence>(
       default: Date.now,
     },
     description: {
+      type: String,
+      default: null,
+    },
+    latitude: {
+      type: Number,
+      default: null,
+    },
+    longitude: {
+      type: Number,
+      default: null,
+    },
+    capturedAt: {
+      type: Date,
+      default: null,
+    },
+    distanceFromSiteKm: {
+      type: Number,
+      default: null,
+    },
+    isLocationVerified: {
+      type: Boolean,
+      default: null,
+    },
+    watermarkText: {
       type: String,
       default: null,
     },

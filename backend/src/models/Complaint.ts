@@ -40,6 +40,11 @@ export interface IComplaintPhoto {
   uploadedAt: Date;
   uploadedBy?: string | null;
   description?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  capturedAt?: Date | null;
+  isLocationVerified?: boolean | null;
+  distanceFromSiteKm?: number | null;
 }
 
 export interface IComplaintTimeline {
@@ -123,6 +128,11 @@ const PhotoSubSchema = new Schema<IComplaintPhoto>(
     uploadedAt: { type: Date, default: Date.now },
     uploadedBy: { type: String, default: null },
     description: { type: String, default: null },
+    latitude: { type: Number, default: null },
+    longitude: { type: Number, default: null },
+    capturedAt: { type: Date, default: null },
+    isLocationVerified: { type: Boolean, default: null },
+    distanceFromSiteKm: { type: Number, default: null },
   },
   { _id: true }
 );

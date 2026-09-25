@@ -58,7 +58,7 @@ import { getEffectiveGoogleClientId } from './components/auth/GoogleOAuthModal';
 const queryClient = new QueryClient();
 
 export const App: React.FC = () => {
-  const { language } = useStore();
+  const language = useStore((state) => state.language);
   const [googleClientId, setGoogleClientId] = React.useState(getEffectiveGoogleClientId);
 
   React.useEffect(() => {

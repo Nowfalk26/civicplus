@@ -19,7 +19,8 @@ const civicEmailSchema = z.object({
 type CivicEmailFormValues = z.infer<typeof civicEmailSchema>;
 
 export const CivicLogin: React.FC = () => {
-  const { setAuth, language } = useStore();
+  const setAuth = useStore((state) => state.setAuth);
+  const language = useStore((state) => state.language);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -224,6 +225,7 @@ export const CivicLogin: React.FC = () => {
                         toast.error('Google Sign-In failed or was cancelled.');
                       }}
                       useOneTap={false}
+                      use_fedcm_for_prompt={true}
                       theme="outline"
                       size="large"
                       text="continue_with"

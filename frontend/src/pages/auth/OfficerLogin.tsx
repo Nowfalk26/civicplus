@@ -161,6 +161,7 @@ export const OfficerLogin: React.FC = () => {
                       toast.error('Officer Google Sign-In failed or was cancelled.');
                     }}
                     useOneTap={false}
+                    use_fedcm_for_prompt={true}
                     theme="outline"
                     size="large"
                     text="continue_with"
